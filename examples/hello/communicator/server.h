@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2020, Intel Corporation
+ * Copyright 2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,51 +31,31 @@
  */
 
 /*
- * librpma.c -- entry points for librpma
+ * server.h -- librpma-based communicator server
  */
 
-#include "out.h"
-#include "util.h"
+#ifndef COMM_SERVER_H
+#define COMM_SERVER_H 1
 
-#include "librpma.h"
-#include "rpma.h"
+#include <stdint.h>
 
-/*
- * librpma_init -- load-time initialization for librpma
- *
- * Called automatically by the run-time loader.
- */
-ATTR_CONSTRUCTOR
-void
-librpma_init(void)
-{
-	util_init();
-	out_init(RPMA_LOG_PREFIX, RPMA_LOG_LEVEL_VAR, RPMA_LOG_FILE_VAR,
-		 RPMA_MAJOR_VERSION, RPMA_MINOR_VERSION);
+/* server context */
+struct server_ctx {
+	struct rpma_zone *zone;
+	struct rpma_connection_group *grp;
+	uint64_t running;
 
-	LOG(3, NULL);
-	/* XXX possible rpma_init placeholder */
-}
+	/* persistent data and its derivatives */
+	struct root_obj *root;
+	struct client_row *clients;
+	uint64_t nclient_rows; /* transient */
 
-/*
- * librpma_fini -- librpma cleanup routine
- *
- * Called automatically when the process terminates.
- */
-ATTR_DESTRUCTOR
-void
-librpma_fini(void)
-{
-	LOG(3, NULL);
+	/* worker threads */
+	struct worker_ctx *workers;
 
-	out_fini();
-}
+	uint64_t nclients; /* current # of clients */
 
-/*
- * rpma_errormsg -- return last error message
- */
-const char *
-rpma_errormsg(void)
-{
-	return out_get_errormsg();
-}
+	struct distributor_t *distributor;
+};
+
+#endif /* server.h */

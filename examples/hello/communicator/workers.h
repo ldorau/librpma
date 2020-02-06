@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2020, Intel Corporation
+ * Copyright 2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,51 +31,47 @@
  */
 
 /*
- * librpma.c -- entry points for librpma
+ * distributor.h -- librpma-based communicator server
  */
 
-#include "out.h"
-#include "util.h"
+#ifndef COMM_WORKERS_H
+#define COMM_WORKERS_H 1
 
-#include "librpma.h"
-#include "rpma.h"
+#include <pthread.h>
 
-/*
- * librpma_init -- load-time initialization for librpma
- *
- * Called automatically by the run-time loader.
- */
-ATTR_CONSTRUCTOR
-void
-librpma_init(void)
-{
-	util_init();
-	out_init(RPMA_LOG_PREFIX, RPMA_LOG_LEVEL_VAR, RPMA_LOG_FILE_VAR,
-		 RPMA_MAJOR_VERSION, RPMA_MINOR_VERSION);
+#include "protocol.h"
+#include "server.h"
 
-	LOG(3, NULL);
-	/* XXX possible rpma_init placeholder */
-}
+/* worker context */
+struct worker_ctx {
+	uint64_t running;
 
-/*
- * librpma_fini -- librpma cleanup routine
- *
- * Called automatically when the process terminates.
- */
-ATTR_DESTRUCTOR
-void
-librpma_fini(void)
-{
-	LOG(3, NULL);
+	struct rpma_dispatcher *disp;
+	pthread_t thread;
+};
 
-	out_fini();
-}
+void workers_init(struct rpma_zone *zone, struct worker_ctx **ws_ptr,
+		  uint64_t nworkers);
 
-/*
- * rpma_errormsg -- return last error message
- */
-const char *
-rpma_errormsg(void)
-{
-	return out_get_errormsg();
-}
+void workers_fini(struct worker_ctx *ws, uint64_t nworkers);
+
+struct worker_ctx *worker_next(struct worker_ctx *ws, uint64_t mask);
+
+struct distributor_t;
+
+void distributor_notify(struct distributor_t *dist);
+
+void distributor_ack(struct distributor_t *dist);
+
+void distributor_init(struct server_ctx *svr);
+
+void distributor_fini(struct server_ctx *svr);
+
+struct writer_t;
+
+void writer_init(struct writer_t **wrt_ptr, struct rpma_connection **conn_ptr,
+		 struct client_local_t *cloc, struct hello_result_t *hres);
+
+void writer_fini(struct writer_t *wrt);
+
+#endif /* workers.h */

@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2020, Intel Corporation
+ * Copyright 2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,51 +31,61 @@
  */
 
 /*
- * librpma.c -- entry points for librpma
+ * dispatcher.h -- internal definitions for librpma dispatcher
  */
+#ifndef RPMA_DISPATCHER_H
+#define RPMA_DISPATCHER_H
 
-#include "out.h"
-#include "util.h"
+#include "os_thread.h"
+#include "sys/queue.h"
 
-#include "librpma.h"
-#include "rpma.h"
+struct rpma_dispatcher_conn {
+	PMDK_TAILQ_ENTRY(rpma_dispatcher_conn) next;
 
-/*
- * librpma_init -- load-time initialization for librpma
- *
- * Called automatically by the run-time loader.
- */
-ATTR_CONSTRUCTOR
-void
-librpma_init(void)
-{
-	util_init();
-	out_init(RPMA_LOG_PREFIX, RPMA_LOG_LEVEL_VAR, RPMA_LOG_FILE_VAR,
-		 RPMA_MAJOR_VERSION, RPMA_MINOR_VERSION);
+	struct rpma_connection *conn;
+};
 
-	LOG(3, NULL);
-	/* XXX possible rpma_init placeholder */
-}
+struct rpma_dispatcher_cq_entry {
+	PMDK_TAILQ_ENTRY(rpma_dispatcher_cq_entry) next;
 
-/*
- * librpma_fini -- librpma cleanup routine
- *
- * Called automatically when the process terminates.
- */
-ATTR_DESTRUCTOR
-void
-librpma_fini(void)
-{
-	LOG(3, NULL);
+	struct rpma_connection *conn;
+	struct fi_cq_msg_entry cq_entry;
+};
 
-	out_fini();
-}
+struct rpma_dispatcher_func_entry {
+	PMDK_TAILQ_ENTRY(rpma_dispatcher_func_entry) next;
 
-/*
- * rpma_errormsg -- return last error message
- */
-const char *
-rpma_errormsg(void)
-{
-	return out_get_errormsg();
-}
+	struct rpma_connection *conn;
+	rpma_queue_func func;
+	void *arg;
+};
+
+struct rpma_dispatcher {
+	struct rpma_zone *zone;
+
+	PMDK_TAILQ_HEAD(head_conn, rpma_dispatcher_conn) conn_set;
+
+	uint64_t waiting;
+
+	PMDK_TAILQ_HEAD(head_cq, rpma_dispatcher_cq_entry) queue_cqe;
+
+	os_mutex_t queue_func_mtx;
+	PMDK_TAILQ_HEAD(head_fq, rpma_dispatcher_func_entry) queue_func;
+};
+
+int rpma_dispatcher_attach_connection(struct rpma_dispatcher *disp,
+				      struct rpma_connection *conn);
+
+int rpma_dispatcher_detach_connection(struct rpma_dispatcher *disp,
+				      struct rpma_connection *conn);
+
+int rpma_dispatch_break(struct rpma_dispatcher *disp);
+
+int rpma_dispatcher_enqueue_cq_entry(struct rpma_dispatcher *disp,
+				     struct rpma_connection *conn,
+				     struct fi_cq_msg_entry *cq_entry);
+int rpma_dispatcher_enqueue_func(struct rpma_dispatcher *disp,
+				 struct rpma_connection *conn,
+				 rpma_queue_func func, void *arg);
+
+#endif /* dispatcher.h */

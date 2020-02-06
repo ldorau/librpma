@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2020, Intel Corporation
+ * Copyright 2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,51 +31,22 @@
  */
 
 /*
- * librpma.c -- entry points for librpma
+ * config.h -- internal definitions for librpma config
  */
+#ifndef RPMA_CONFIG_H
+#define RPMA_CONFIG_H
 
-#include "out.h"
-#include "util.h"
+#include <librpma.h>
 
-#include "librpma.h"
-#include "rpma.h"
+struct rpma_config {
+	char *addr;
+	char *service;
+	size_t msg_size;
+	uint64_t send_queue_length;
+	uint64_t recv_queue_length;
+	rpma_malloc_func malloc;
+	rpma_free_func free;
+	unsigned flags;
+};
 
-/*
- * librpma_init -- load-time initialization for librpma
- *
- * Called automatically by the run-time loader.
- */
-ATTR_CONSTRUCTOR
-void
-librpma_init(void)
-{
-	util_init();
-	out_init(RPMA_LOG_PREFIX, RPMA_LOG_LEVEL_VAR, RPMA_LOG_FILE_VAR,
-		 RPMA_MAJOR_VERSION, RPMA_MINOR_VERSION);
-
-	LOG(3, NULL);
-	/* XXX possible rpma_init placeholder */
-}
-
-/*
- * librpma_fini -- librpma cleanup routine
- *
- * Called automatically when the process terminates.
- */
-ATTR_DESTRUCTOR
-void
-librpma_fini(void)
-{
-	LOG(3, NULL);
-
-	out_fini();
-}
-
-/*
- * rpma_errormsg -- return last error message
- */
-const char *
-rpma_errormsg(void)
-{
-	return out_get_errormsg();
-}
+#endif /* config.h */

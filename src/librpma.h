@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2020, Intel Corporation
+ * Copyright 2019-2020, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,20 +30,19 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*
+ * librpma.h -- definitions of librpma entry points (EXPERIMENTAL)
+ *
+ * This library provides low-level support for remote access to persistent
+ * memory utilizing RDMA-capable RNICs.
+ *
+ * See librpma(7) for details.
+ */
+
 #ifndef LIBRPMA_H
-#define LIBRPMA_H
+#define LIBRPMA_H 1
 
-#include <stddef.h>
-#include <stdint.h>
+#include <msg.h>
+#include <rma.h>
 
-#define RPMA_STATUS_OK 0
-#define RPMA_STATUS_UNKNOWN_ERROR 1
-#define RPMA_STATUS_NOT_FOUND 2
-#define RPMA_STATUS_NOT_SUPPORTED 3
-#define RPMA_STATUS_INVALID_ARGUMENT 4
-
-int rpma_open(void);
-void rpma_close(void);
-const char *rpma_errormsg(void);
-
-#endif /* LIBRPMA_H */
+#endif /* librpma.h */

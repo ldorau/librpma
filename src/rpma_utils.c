@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2020, Intel Corporation
+ * Copyright 2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,51 +31,52 @@
  */
 
 /*
- * librpma.c -- entry points for librpma
+ * rpma_utils.c -- entry points for librpma RPMA utils
  */
 
-#include "out.h"
-#include "util.h"
+#include <librpma.h>
 
-#include "librpma.h"
-#include "rpma.h"
+#include "rpma_utils.h"
 
-/*
- * librpma_init -- load-time initialization for librpma
- *
- * Called automatically by the run-time loader.
- */
-ATTR_CONSTRUCTOR
 void
-librpma_init(void)
+rpma_utils_res_close(struct fid *res, const char *desc)
 {
-	util_init();
-	out_init(RPMA_LOG_PREFIX, RPMA_LOG_LEVEL_VAR, RPMA_LOG_FILE_VAR,
-		 RPMA_MAJOR_VERSION, RPMA_MINOR_VERSION);
-
-	LOG(3, NULL);
-	/* XXX possible rpma_init placeholder */
+	int ret = fi_close(res);
+	if (ret)
+		ERR_FI(ret, "fi_close(%s)", desc);
 }
 
-/*
- * librpma_fini -- librpma cleanup routine
- *
- * Called automatically when the process terminates.
- */
-ATTR_DESTRUCTOR
 void
-librpma_fini(void)
+rpma_utils_freeinfo(struct fi_info **info)
 {
-	LOG(3, NULL);
-
-	out_fini();
+	fi_freeinfo(*info);
+	*info = NULL;
 }
 
-/*
- * rpma_errormsg -- return last error message
- */
-const char *
-rpma_errormsg(void)
+void
+rpma_utils_wait_start(uint64_t *waiting)
 {
-	return out_get_errormsg();
+	/*
+	 * load and store without barriers should be good enough here.
+	 * fetch_and_or are used as workaround for helgrind issue.
+	 */
+	util_fetch_and_or64(waiting, 1);
+}
+
+void
+rpma_utils_wait_break(uint64_t *waiting)
+{
+	/*
+	 * load and store without barriers should be good enough here.
+	 * fetch_and_or are used as workaround for helgrind issue.
+	 */
+	util_fetch_and_and32(waiting, 0);
+}
+
+uint64_t
+rpma_utils_is_waiting(uint64_t *waiting)
+{
+	uint64_t is_waiting;
+	util_atomic_load_explicit64(waiting, &is_waiting, memory_order_acquire);
+	return is_waiting;
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2020, Intel Corporation
+ * Copyright 2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,51 +31,40 @@
  */
 
 /*
- * librpma.c -- entry points for librpma
+ * zone.h -- internal definitions for librpma zone
  */
+#ifndef RPMA_ZONE_H
+#define RPMA_ZONE_H
 
-#include "out.h"
-#include "util.h"
+#include <librpma.h>
 
-#include "librpma.h"
-#include "rpma.h"
+struct rpma_zone {
+	struct fi_info *info;	   /* fabric interface information */
+	struct fid_fabric *fabric; /* fabric domain */
+	struct fid_domain *domain; /* fabric protection domain */
+	struct fid_eq *eq;	   /* event queue */
 
-/*
- * librpma_init -- load-time initialization for librpma
- *
- * Called automatically by the run-time loader.
- */
-ATTR_CONSTRUCTOR
-void
-librpma_init(void)
-{
-	util_init();
-	out_init(RPMA_LOG_PREFIX, RPMA_LOG_LEVEL_VAR, RPMA_LOG_FILE_VAR,
-		 RPMA_MAJOR_VERSION, RPMA_MINOR_VERSION);
+	struct fid_pep *pep; /* passive endpoint - listener */
+	struct fi_info *conn_req_info;
+	void *uarg;
+	uint64_t active_connections;
+	struct ravl *connections;
 
-	LOG(3, NULL);
-	/* XXX possible rpma_init placeholder */
-}
+	uint64_t waiting;
 
-/*
- * librpma_fini -- librpma cleanup routine
- *
- * Called automatically when the process terminates.
- */
-ATTR_DESTRUCTOR
-void
-librpma_fini(void)
-{
-	LOG(3, NULL);
+	rpma_on_connection_event_func on_connection_event_func;
+	rpma_on_timeout_func on_timeout_func;
+	int timeout;
 
-	out_fini();
-}
+	/* XXX should be rpma_connection specific? */
+	size_t msg_size;
+	uint64_t send_queue_length;
+	uint64_t recv_queue_length;
 
-/*
- * rpma_errormsg -- return last error message
- */
-const char *
-rpma_errormsg(void)
-{
-	return out_get_errormsg();
-}
+	unsigned flags;
+};
+
+int rpma_zone_wait_connected(struct rpma_zone *zone,
+			     struct rpma_connection *conn);
+
+#endif /* zone.h */

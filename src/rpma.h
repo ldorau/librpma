@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2020, Intel Corporation
+ * Copyright 2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,51 +31,24 @@
  */
 
 /*
- * librpma.c -- entry points for librpma
+ * rpma.h -- internal definitions for librpma
  */
+#ifndef PMEM2_H
+#define PMEM2_H
 
-#include "out.h"
-#include "util.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-#include "librpma.h"
-#include "rpma.h"
+#define RPMA_MAJOR_VERSION 0
+#define RPMA_MINOR_VERSION 0
 
-/*
- * librpma_init -- load-time initialization for librpma
- *
- * Called automatically by the run-time loader.
- */
-ATTR_CONSTRUCTOR
-void
-librpma_init(void)
-{
-	util_init();
-	out_init(RPMA_LOG_PREFIX, RPMA_LOG_LEVEL_VAR, RPMA_LOG_FILE_VAR,
-		 RPMA_MAJOR_VERSION, RPMA_MINOR_VERSION);
+#define RPMA_LOG_PREFIX "librpma"
+#define RPMA_LOG_LEVEL_VAR "RPMA_LOG_LEVEL"
+#define RPMA_LOG_FILE_VAR "RPMA_LOG_FILE"
 
-	LOG(3, NULL);
-	/* XXX possible rpma_init placeholder */
+#ifdef __cplusplus
 }
+#endif
 
-/*
- * librpma_fini -- librpma cleanup routine
- *
- * Called automatically when the process terminates.
- */
-ATTR_DESTRUCTOR
-void
-librpma_fini(void)
-{
-	LOG(3, NULL);
-
-	out_fini();
-}
-
-/*
- * rpma_errormsg -- return last error message
- */
-const char *
-rpma_errormsg(void)
-{
-	return out_get_errormsg();
-}
+#endif

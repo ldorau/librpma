@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2020, Intel Corporation
+ * Copyright 2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,51 +31,32 @@
  */
 
 /*
- * librpma.c -- entry points for librpma
+ * rpma_utils.h -- librpma utilities functions
  */
+
+#ifndef RPMA_UTILS_H
+#define RPMA_UTILS_H 1
+
+#include <errno.h>
+#include <rdma/fabric.h>
+#include <rdma/fi_errno.h>
 
 #include "out.h"
-#include "util.h"
 
-#include "librpma.h"
-#include "rpma.h"
+#define RPMA_E_ERRNO (-errno)
+#define RPMA_E_FI_ERRNO (errno)
 
-/*
- * librpma_init -- load-time initialization for librpma
- *
- * Called automatically by the run-time loader.
- */
-ATTR_CONSTRUCTOR
-void
-librpma_init(void)
-{
-	util_init();
-	out_init(RPMA_LOG_PREFIX, RPMA_LOG_LEVEL_VAR, RPMA_LOG_FILE_VAR,
-		 RPMA_MAJOR_VERSION, RPMA_MINOR_VERSION);
+#define ERR_FI(e, fmt, args...) ERR(fmt ": %s", ##args, fi_strerror((int)(e)))
 
-	LOG(3, NULL);
-	/* XXX possible rpma_init placeholder */
-}
+#define RPMA_FLAG_ON(set, flag) (set) |= (flag)
+#define RPMA_FLAG_OFF(set, flag) (set) &= ~(flag)
 
-/*
- * librpma_fini -- librpma cleanup routine
- *
- * Called automatically when the process terminates.
- */
-ATTR_DESTRUCTOR
-void
-librpma_fini(void)
-{
-	LOG(3, NULL);
+void rpma_utils_res_close(struct fid *res, const char *desc);
 
-	out_fini();
-}
+void rpma_utils_freeinfo(struct fi_info **info);
 
-/*
- * rpma_errormsg -- return last error message
- */
-const char *
-rpma_errormsg(void)
-{
-	return out_get_errormsg();
-}
+void rpma_utils_wait_start(uint64_t *waiting);
+void rpma_utils_wait_break(uint64_t *waiting);
+uint64_t rpma_utils_is_waiting(uint64_t *waiting);
+
+#endif /* RPMA_UTILS_H */

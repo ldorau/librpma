@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2020, Intel Corporation
+ * Copyright 2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,51 +31,31 @@
  */
 
 /*
- * librpma.c -- entry points for librpma
- */
-
-#include "out.h"
-#include "util.h"
-
-#include "librpma.h"
-#include "rpma.h"
-
-/*
- * librpma_init -- load-time initialization for librpma
+ * librpma/msg.h -- definitions of librpma msg entry points (EXPERIMENTAL)
  *
- * Called automatically by the run-time loader.
- */
-ATTR_CONSTRUCTOR
-void
-librpma_init(void)
-{
-	util_init();
-	out_init(RPMA_LOG_PREFIX, RPMA_LOG_LEVEL_VAR, RPMA_LOG_FILE_VAR,
-		 RPMA_MAJOR_VERSION, RPMA_MINOR_VERSION);
-
-	LOG(3, NULL);
-	/* XXX possible rpma_init placeholder */
-}
-
-/*
- * librpma_fini -- librpma cleanup routine
+ * This library provides low-level support for remote access to persistent
+ * memory utilizing RDMA-capable RNICs.
  *
- * Called automatically when the process terminates.
+ * See librpma(7) for details.
  */
-ATTR_DESTRUCTOR
-void
-librpma_fini(void)
-{
-	LOG(3, NULL);
 
-	out_fini();
-}
+#ifndef LIBRPMA_MSG_H
+#define LIBRPMA_MSG_H 1
 
-/*
- * rpma_errormsg -- return last error message
- */
-const char *
-rpma_errormsg(void)
-{
-	return out_get_errormsg();
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <base.h>
+
+int rpma_msg_get_ptr(struct rpma_connection *conn, void **ptr);
+
+int rpma_connection_send(struct rpma_connection *conn, void *ptr);
+
+#ifdef __cplusplus
 }
+#endif
+#endif /* librpma.h */

@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2020, Intel Corporation
+ * Copyright 2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,51 +31,33 @@
  */
 
 /*
- * librpma.c -- entry points for librpma
+ * memory.h -- internal definitions for librpma memory
  */
+#ifndef RPMA_MEMORY_H
+#define RPMA_MEMORY_H
 
-#include "out.h"
-#include "util.h"
+#include "zone.h"
 
-#include "librpma.h"
-#include "rpma.h"
+struct rpma_memory_local {
+	void *ptr;
+	size_t size;
 
-/*
- * librpma_init -- load-time initialization for librpma
- *
- * Called automatically by the run-time loader.
- */
-ATTR_CONSTRUCTOR
-void
-librpma_init(void)
-{
-	util_init();
-	out_init(RPMA_LOG_PREFIX, RPMA_LOG_LEVEL_VAR, RPMA_LOG_FILE_VAR,
-		 RPMA_MAJOR_VERSION, RPMA_MINOR_VERSION);
+	struct fid_mr *mr;
+	void *desc; /* local memory descriptor */
+};
 
-	LOG(3, NULL);
-	/* XXX possible rpma_init placeholder */
-}
+struct rpma_memory_remote {
+	/* XXX version required */
+	uint64_t raddr; /* remote memory base address */
+	uint64_t rkey;	/* remote memory protection key */
+	size_t size;
+	uint64_t unused[1]; /* XXX */
+};
 
-/*
- * librpma_fini -- librpma cleanup routine
- *
- * Called automatically when the process terminates.
- */
-ATTR_DESTRUCTOR
-void
-librpma_fini(void)
-{
-	LOG(3, NULL);
+typedef struct rpma_memory_remote rpma_memory_id_internal;
 
-	out_fini();
-}
+int rpma_memory_local_new_internal(struct rpma_zone *zone, void *ptr,
+				   size_t size, uint64_t access,
+				   struct rpma_memory_local **mem_ptr);
 
-/*
- * rpma_errormsg -- return last error message
- */
-const char *
-rpma_errormsg(void)
-{
-	return out_get_errormsg();
-}
+#endif /* memory.h */

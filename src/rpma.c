@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2020, Intel Corporation
+ * Copyright 2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,51 +31,41 @@
  */
 
 /*
- * librpma.c -- entry points for librpma
+ * rpma.c -- entry points for librpma
  */
 
-#include "out.h"
-#include "util.h"
-
-#include "librpma.h"
 #include "rpma.h"
+#include "librpma.h"
 
-/*
- * librpma_init -- load-time initialization for librpma
- *
- * Called automatically by the run-time loader.
- */
-ATTR_CONSTRUCTOR
-void
-librpma_init(void)
+int
+rpma_connection_group_new(struct rpma_connection_group **group)
 {
-	util_init();
-	out_init(RPMA_LOG_PREFIX, RPMA_LOG_LEVEL_VAR, RPMA_LOG_FILE_VAR,
-		 RPMA_MAJOR_VERSION, RPMA_MINOR_VERSION);
-
-	LOG(3, NULL);
-	/* XXX possible rpma_init placeholder */
+	return RPMA_E_NOSUPP;
 }
 
-/*
- * librpma_fini -- librpma cleanup routine
- *
- * Called automatically when the process terminates.
- */
-ATTR_DESTRUCTOR
-void
-librpma_fini(void)
+int
+rpma_connection_group_add(struct rpma_connection_group *group,
+			  struct rpma_connection *conn)
 {
-	LOG(3, NULL);
-
-	out_fini();
+	return RPMA_E_NOSUPP;
 }
 
-/*
- * rpma_errormsg -- return last error message
- */
-const char *
-rpma_errormsg(void)
+int
+rpma_connection_group_remove(struct rpma_connection_group *group,
+			     struct rpma_connection *conn)
 {
-	return out_get_errormsg();
+	return RPMA_E_NOSUPP;
+}
+
+int
+rpma_connection_group_enqueue(struct rpma_connection_group *group,
+			      rpma_queue_func func, void *arg)
+{
+	return RPMA_E_NOSUPP;
+}
+
+int
+rpma_connection_group_delete(struct rpma_connection_group **group)
+{
+	return RPMA_E_NOSUPP;
 }
