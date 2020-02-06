@@ -57,6 +57,7 @@ RUN apt-get update \
 	git \
 	graphviz \
 	libdaxctl-dev \
+	libfabric-dev \
 	libkmod-dev \
 	libncurses5-dev \
 	libndctl-dev \

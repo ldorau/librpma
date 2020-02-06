@@ -34,12 +34,34 @@ project(rpma C)
 add_cppstyle(src)
 add_check_whitespace(src)
 
-set(SOURCES librpma.c)
+add_subdirectory(common)
+
+set(SOURCES
+	common/alloc.c
+	common/os_posix.c
+	common/os_thread_posix.c
+	common/out.c
+	common/ravl.c
+	common/util.c
+	common/util_posix.c
+	config.c
+	connection.c
+	dispatcher.c
+	librpma.c
+	memory.c
+	msg.c
+	rma.c
+	rpma.c
+	rpma_utils.c
+	zone.c)
 
 add_library(rpma SHARED ${SOURCES})
 
+target_include_directories(rpma PRIVATE . common)
+
 target_link_libraries(rpma PRIVATE
 	${LIBPMEM_LIBRARIES}
+	${LIBFABRIC_LIBRARIES}
 	-Wl,--version-script=${CMAKE_SOURCE_DIR}/src/librpma.map)
 
 set_target_properties(rpma PROPERTIES SOVERSION 0)

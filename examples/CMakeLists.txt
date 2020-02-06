@@ -71,6 +71,13 @@ add_cppstyle(examples-doc_snippets
 add_check_whitespace(examples-doc_snippets
 	${CMAKE_CURRENT_SOURCE_DIR}/doc_snippets/*.[ch])
 
+add_cppstyle(examples-hello
+	${CMAKE_CURRENT_SOURCE_DIR}/hello/*.[ch]
+	${CMAKE_CURRENT_SOURCE_DIR}/hello/communicator/*.[ch])
+add_check_whitespace(examples-hello
+	${CMAKE_CURRENT_SOURCE_DIR}/hello/*.[ch]
+	${CMAKE_CURRENT_SOURCE_DIR}/hello/communicator/*.[ch])
+
 function(add_example name)
 	set(srcs ${ARGN})
 	prepend(srcs ${CMAKE_CURRENT_SOURCE_DIR} ${srcs})
@@ -97,5 +104,6 @@ else()
 endif()
 
 add_example(template-example template-example/template-example.c)
+add_example(hello hello/hello.c)
 
 add_library(doc_snippets_template-snippet OBJECT doc_snippets/template-snippet.c)

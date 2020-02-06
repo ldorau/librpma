@@ -54,6 +54,7 @@ RUN dnf update -y \
 	git \
 	hub \
 	kmod-devel \
+	libfabric-devel \
 	libtool \
 	libudev-devel \
 	libunwind-devel \
