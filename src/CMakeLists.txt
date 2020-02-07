@@ -31,10 +31,15 @@
 
 project(rpma C)
 
-add_cppstyle(src)
-add_check_whitespace(src)
+add_cppstyle(src
+	${CMAKE_CURRENT_SOURCE_DIR}/*.[ch]
+	${CMAKE_CURRENT_SOURCE_DIR}/common/*.[ch]
+	${CMAKE_CURRENT_SOURCE_DIR}/include/*.h)
 
-add_subdirectory(common)
+add_check_whitespace(src
+	${CMAKE_CURRENT_SOURCE_DIR}/*.[ch]
+	${CMAKE_CURRENT_SOURCE_DIR}/common/*.[ch]
+	${CMAKE_CURRENT_SOURCE_DIR}/include/*.h)
 
 set(SOURCES
 	common/alloc.c
@@ -57,7 +62,7 @@ set(SOURCES
 
 add_library(rpma SHARED ${SOURCES})
 
-target_include_directories(rpma PRIVATE . common)
+target_include_directories(rpma PRIVATE . include common)
 
 target_link_libraries(rpma PRIVATE
 	${LIBPMEM_LIBRARIES}
@@ -65,8 +70,12 @@ target_link_libraries(rpma PRIVATE
 	${LIBRDMACM_LIBRARIES}
 	-Wl,--version-script=${CMAKE_SOURCE_DIR}/src/librpma.map)
 
-set_target_properties(rpma PROPERTIES SOVERSION 0)
-set_target_properties(rpma PROPERTIES PUBLIC_HEADER "librpma.h")
+set_target_properties(rpma PROPERTIES
+	SOVERSION 0
+	PUBLIC_HEADER include/librpma.h
+	PUBLIC_HEADER include/base.h
+	PUBLIC_HEADER include/msg.h
+	PUBLIC_HEADER include/rma.h)
 
 target_compile_definitions(rpma PRIVATE SRCVERSION="${SRCVERSION}")
 

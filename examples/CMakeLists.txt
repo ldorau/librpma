@@ -58,7 +58,11 @@ if(COVERAGE)
        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -coverage")
 endif()
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../src ${LIBRPMA_INCLUDE_DIRS})
+include_directories(
+	${LIBRPMA_INCLUDE_DIRS}
+	${CMAKE_CURRENT_SOURCE_DIR}/../src
+	${CMAKE_CURRENT_SOURCE_DIR}/../src/include)
+
 link_directories(${LIBRPMA_LIBRARY_DIRS})
 
 add_cppstyle(examples-template-example
