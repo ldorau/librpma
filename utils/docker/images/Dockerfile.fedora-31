@@ -54,7 +54,6 @@ RUN dnf update -y \
 	git \
 	hub \
 	kmod-devel \
-	libfabric-devel \
 	libtool \
 	libudev-devel \
 	libunwind-devel \
@@ -66,6 +65,7 @@ RUN dnf update -y \
 	open-sans-fonts \
 	pandoc \
 	perl-Text-Diff \
+	rdma-core-devel \
 	rpm-build \
 	rpm-build-libs \
 	rpmdevtools \

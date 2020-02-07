@@ -57,10 +57,11 @@ RUN apt-get update \
 	git \
 	graphviz \
 	libdaxctl-dev \
-	libfabric-dev \
+	libibverbs-dev \
 	libkmod-dev \
 	libncurses5-dev \
 	libndctl-dev \
+	librdmacm-dev \
 	libtext-diff-perl \
 	libudev-dev \
 	libunwind-dev \

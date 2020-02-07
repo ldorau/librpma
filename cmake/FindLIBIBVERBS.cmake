@@ -29,54 +29,29 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-project(rpma C)
+message(STATUS "Looking for libibverbs ...")
 
-add_cppstyle(src)
-add_check_whitespace(src)
+find_library(LIBIBVERBS_LIBRARY
+	NAMES libibverbs.so libibverbs.so.1
+	PATHS /usr/lib64 /usr/lib)
 
-add_subdirectory(common)
+find_path(LIBIBVERBS_INCLUDE_DIR
+	NAMES verbs.h
+	PATHS /usr/include/infiniband)
 
-set(SOURCES
-	common/alloc.c
-	common/os_posix.c
-	common/os_thread_posix.c
-	common/out.c
-	common/ravl.c
-	common/util.c
-	common/util_posix.c
-	config.c
-	connection.c
-	dispatcher.c
-	librpma.c
-	memory.c
-	msg.c
-	rma.c
-	rpma.c
-	rpma_utils.c
-	zone.c)
+set(LIBIBVERBS_LIBRARIES ${LIBIBVERBS_LIBRARY})
+set(LIBIBVERBS_INCLUDE_DIRS ${LIBIBVERBS_INCLUDE_DIR})
 
-add_library(rpma SHARED ${SOURCES})
-
-target_include_directories(rpma PRIVATE . common)
-
-target_link_libraries(rpma PRIVATE
-	${LIBPMEM_LIBRARIES}
-	${LIBIBVERBS_LIBRARIES}
-	${LIBRDMACM_LIBRARIES}
-	-Wl,--version-script=${CMAKE_SOURCE_DIR}/src/librpma.map)
-
-set_target_properties(rpma PROPERTIES SOVERSION 0)
-set_target_properties(rpma PROPERTIES PUBLIC_HEADER "librpma.h")
-
-target_compile_definitions(rpma PRIVATE SRCVERSION="${SRCVERSION}")
-
-if(VALGRIND_FOUND)
-	target_include_directories(rpma PRIVATE src/valgrind)
-	# Enable librpma valgrind annotations
-	target_compile_options(rpma PRIVATE -DLIBRPMA_VG_ENABLED=1)
+set(MSG_NOT_FOUND "libibverbs NOT found (set CMAKE_PREFIX_PATH to point the location)")
+if(NOT (LIBIBVERBS_LIBRARY AND LIBIBVERBS_INCLUDE_DIR))
+	if(LIBIBVERBS_FIND_REQUIRED)
+		message(FATAL_ERROR ${MSG_NOT_FOUND})
+	else()
+		message(WARNING ${MSG_NOT_FOUND})
+	endif()
+else()
+	message(STATUS "  Found libibverbs library: ${LIBIBVERBS_LIBRARY}")
+	message(STATUS "  Found libibverbs include directory: ${LIBIBVERBS_INCLUDE_DIR}")
 endif()
 
-install(TARGETS rpma
-	PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-	RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+mark_as_advanced(LIBIBVERBS_LIBRARY LIBIBVERBS_INCLUDE_DIR)
