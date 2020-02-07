@@ -67,7 +67,7 @@ else
 	fi
 fi
 
-imageName=${DOCKERHUB_REPO}:0.1-${OS}-${OS_VER}
+imageName=${DOCKERHUB_REPO}:0.2-${OS}-${OS_VER}
 containerName=librpma-${OS}-${OS_VER}
 
 if [[ "$command" == "" ]]; then
