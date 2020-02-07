@@ -229,6 +229,7 @@ on_connection_event(struct rpma_zone *zone, uint64_t event,
 		    struct rpma_connection *conn, void *uarg)
 {
 	struct base_t *b = uarg;
+	int ret = 0;
 
 	switch (event) {
 		case RPMA_CONNECTION_EVENT_INCOMING:
@@ -250,7 +251,11 @@ on_connection_event(struct rpma_zone *zone, uint64_t event,
 			/* establish the outgoing connection */
 			rpma_connection_new(zone, &b->conn);
 			rpma_connection_set_custom_data(b->conn, (void *)b);
-			rpma_connection_establish(b->conn);
+			ret = rpma_connection_establish(b->conn);
+			if (ret) {
+				rpma_connection_delete(&b->conn);
+				return ret;
+			}
 			rpma_connection_attach(b->conn, b->disp);
 
 			/* stop waiting for timeout */
@@ -480,7 +485,10 @@ main(int argc, char *argv[])
 	if (ret)
 		goto err_remote_init;
 
-	rpma_zone_wait_connections(base.zone, &base);
+	ret = rpma_zone_wait_connections(base.zone, &base);
+
+	if (ret)
+		fprintf(stderr, "hello: %s\n", strerror(ret));
 
 err_remote_init:
 	remote_fini(&base);

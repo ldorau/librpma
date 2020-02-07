@@ -1,5 +1,5 @@
 /*
- * Copyright 2019, Intel Corporation
+ * Copyright 2019-2020, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,7 +35,6 @@
  */
 
 #include <errno.h>
-#include <rdma/fi_endpoint.h>
 
 #include "alloc.h"
 #include "connection.h"
@@ -44,8 +43,8 @@
 #include "util.h"
 
 static int
-msg_queue_init(struct rpma_connection *conn, size_t queue_length,
-	       uint64_t access, struct rpma_memory_local **buff)
+msg_queue_init(struct rpma_connection *conn, size_t queue_length, int access,
+	       struct rpma_memory_local **buff)
 {
 	size_t buff_size = conn->zone->msg_size * queue_length;
 	buff_size = ALIGN_UP(buff_size, Pagesize);
@@ -86,43 +85,68 @@ msg_queue_fini(struct rpma_connection *conn, struct rpma_memory_local **buff)
 }
 
 static void
-msg_init(struct fi_msg *msg, void **desc, const struct iovec *msg_iov)
+msg_init(struct ibv_send_wr *send, struct ibv_recv_wr *recv,
+	 struct ibv_sge *sge, struct rpma_memory_local *buff, size_t length)
 {
-	msg->msg_iov = msg_iov;
-	msg->desc = desc;
-	msg->iov_count = 1;
-	msg->addr = 0;
-	msg->context = NULL; /* XXX */
-	msg->data = 0;
+	ASSERT(length < UINT32_MAX);
+	ASSERTne(sge, NULL);
+
+	if (send) {
+		ASSERTeq(recv, NULL);
+
+		memset(send, 0, sizeof(*send));
+		send->wr_id = 0;
+		send->next = NULL;
+		send->sg_list = sge;
+		send->num_sge = 1;
+		send->opcode = IBV_WR_SEND;
+		send->send_flags = IBV_SEND_SIGNALED;
+	} else {
+		ASSERTne(recv, NULL);
+
+		memset(recv, 0, sizeof(*recv));
+		recv->next = NULL;
+		recv->sg_list = sge;
+		recv->num_sge = 1;
+		recv->wr_id = 0;
+	}
+
+	/* sge->addr has to be provided just before ibv_post_send */
+	sge->length = (uint32_t)length;
+	sge->lkey = buff->mr->lkey;
 }
 
 int
 rpma_connection_msg_init(struct rpma_connection *conn)
 {
+	struct rpma_msg *send = &conn->send;
+	struct rpma_msg *recv = &conn->recv;
+
 	int ret;
 
 	conn->send_buff_id = 0;
 
-	ret = msg_queue_init(conn, conn->zone->send_queue_length, FI_SEND,
-			     &conn->send_buff);
+	int msg_access = IBV_ACCESS_LOCAL_WRITE; /* XXX ? */
+	ret = msg_queue_init(conn, conn->zone->send_queue_length, msg_access,
+			     &send->buff);
 	if (ret)
 		return ret;
 
-	ret = msg_queue_init(conn, conn->zone->recv_queue_length, FI_RECV,
-			     &conn->recv_buff);
+	ret = msg_queue_init(conn, conn->zone->recv_queue_length, msg_access,
+			     &recv->buff);
 	if (ret)
 		goto err_recv_queue_init;
 
 	/* initialize msgs */
-	msg_init(&conn->send.msg, &conn->send_buff->desc, &conn->send.iov);
-	msg_init(&conn->recv.msg, &conn->recv_buff->desc, &conn->recv.iov);
-	conn->send.flags = FI_COMPLETION;
-	conn->recv.flags = FI_COMPLETION;
+	msg_init(&send->send, NULL, &send->sge, send->buff,
+		 conn->zone->msg_size);
+	msg_init(NULL, &recv->recv, &recv->sge, recv->buff,
+		 conn->zone->msg_size);
 
 	return 0;
 
 err_recv_queue_init:
-	(void)msg_queue_fini(conn, &conn->send_buff);
+	(void)msg_queue_fini(conn, &conn->send.buff);
 	return ret;
 }
 
@@ -130,11 +154,11 @@ int
 rpma_connection_msg_fini(struct rpma_connection *conn)
 {
 	int ret;
-	ret = msg_queue_fini(conn, &conn->recv_buff);
+	ret = msg_queue_fini(conn, &conn->recv.buff);
 	if (ret)
 		return ret;
 
-	ret = msg_queue_fini(conn, &conn->send_buff);
+	ret = msg_queue_fini(conn, &conn->send.buff);
 	if (ret)
 		return ret;
 
@@ -145,7 +169,7 @@ int
 rpma_msg_get_ptr(struct rpma_connection *conn, void **ptr)
 {
 	void *buff;
-	int ret = rpma_memory_local_get_ptr(conn->send_buff, &buff);
+	int ret = rpma_memory_local_get_ptr(conn->send.buff, &buff);
 	if (ret)
 		return ret;
 
@@ -164,19 +188,20 @@ rpma_msg_get_ptr(struct rpma_connection *conn, void **ptr)
 int
 rpma_connection_send(struct rpma_connection *conn, void *ptr)
 {
-	struct rpma_msg *send = &conn->send;
+	struct ibv_send_wr *bad_wr;
+	uint64_t addr = (uint64_t)ptr;
 
-	send->iov.iov_base = ptr;
-	send->iov.iov_len = conn->zone->msg_size;
-	send->msg.context = ptr;
+	struct rpma_msg *msg = &conn->send;
+	msg->send.wr_id = addr;
+	msg->sge.addr = addr;
 
-	int ret = (int)fi_sendmsg(conn->ep, &send->msg, send->flags);
+	int ret = ibv_post_send(conn->id->qp, &msg->send, &bad_wr);
 	if (ret) {
-		ERR_FI(ret, "fi_sendmsg");
+		ERR_STR(ret, "ibv_post_send");
 		return ret;
 	}
 
-	ret = rpma_connection_cq_wait(conn, FI_SEND, ptr);
+	ret = rpma_connection_cq_wait(conn, IBV_WC_SEND, addr);
 	if (ret)
 		return ret;
 
@@ -186,17 +211,16 @@ rpma_connection_send(struct rpma_connection *conn, void *ptr)
 int
 rpma_connection_recv_post(struct rpma_connection *conn, void *ptr)
 {
-	struct rpma_msg *recv = &conn->recv;
+	struct ibv_recv_wr *bad_wr;
+	uint64_t addr = (uint64_t)ptr;
 
-	recv->iov.iov_base = ptr;
-	recv->iov.iov_len = conn->zone->msg_size;
-	recv->msg.context = ptr;
+	struct rpma_msg *msg = &conn->recv;
+	msg->recv.wr_id = addr;
+	msg->sge.addr = addr;
 
-	int ret = (int)fi_recvmsg(conn->ep, &recv->msg, recv->flags);
-	if (ret) {
-		ERR_FI(ret, "fi_recvmsg");
-		return ret;
-	}
+	int ret = ibv_post_recv(conn->id->qp, &msg->recv, &bad_wr);
+	if (ret)
+		return -ret; /* XXX macro? */
 
 	return 0;
 }

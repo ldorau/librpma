@@ -1,5 +1,5 @@
 /*
- * Copyright 2019, Intel Corporation
+ * Copyright 2019-2020, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,7 +34,7 @@
  * connection.c -- entry points for librpma connection
  */
 
-#include <rdma/fi_cm.h>
+#include <rdma/rdma_cma.h>
 
 #include <librpma.h>
 
@@ -55,7 +55,9 @@ rpma_connection_new(struct rpma_zone *zone, struct rpma_connection **conn)
 		return RPMA_E_ERRNO;
 
 	ptr->zone = zone;
-
+	ptr->id = NULL;
+	ptr->cq = NULL;
+	ptr->disconnected = 0;
 	ptr->disp = NULL;
 
 	ptr->on_connection_recv_func = NULL;
@@ -83,79 +85,69 @@ err_rma_init:
 }
 
 static int
-ep_init(struct rpma_connection *conn, struct fi_info *info)
+id_init(struct rpma_connection *conn, struct rdma_cm_id *id)
 {
 	struct rpma_zone *zone = conn->zone;
+	int ret = 0;
 
-	int ret = fi_endpoint(zone->domain, info, &conn->ep, NULL);
+	int cqe = CQ_SIZE;
+	conn->cq = ibv_create_cq(id->verbs, cqe, (void *)conn, 0, 0);
+	if (!conn->cq)
+		return RPMA_E_ERRNO;
+
+	struct ibv_qp_init_attr init_qp_attr;
+
+	init_qp_attr.qp_context = conn;
+	init_qp_attr.send_cq = conn->cq;
+	init_qp_attr.recv_cq = conn->cq;
+	init_qp_attr.srq = NULL;
+	init_qp_attr.cap.max_send_wr = CQ_SIZE; /* XXX */
+	init_qp_attr.cap.max_recv_wr = CQ_SIZE; /* XXX */
+	init_qp_attr.cap.max_send_sge = 1;
+	init_qp_attr.cap.max_recv_sge = 1;
+	init_qp_attr.cap.max_inline_data = 0; /* XXX */
+	init_qp_attr.qp_type = IBV_QPT_RC;
+	init_qp_attr.sq_sig_all = 0;
+
+	ret = rdma_create_qp(id, zone->pd, &init_qp_attr);
 	if (ret) {
-		ERR_FI(ret, "fi_endpoint");
-		return ret;
+		ret = RPMA_E_ERRNO;
+		goto err_create_qp;
 	}
 
-	/* bind event queue to the endpoint */
-	ret = fi_ep_bind(conn->ep, &zone->eq->fid, 0);
-	if (ret) {
-		ERR_FI(ret, "fi_ep_bind(eq)");
-		goto err_bind_eq;
-	}
-
-	struct fi_cq_attr cq_attr = {
-		.size = CQ_SIZE,
-		.flags = 0,
-		.format = FI_CQ_FORMAT_MSG, /* need context and flags */
-		.wait_obj = FI_WAIT_UNSPEC,
-		.signaling_vector = 0,
-		.wait_cond = FI_CQ_COND_NONE,
-		.wait_set = NULL,
-	};
-
-	void *context = conn;
-
-	ret = fi_cq_open(zone->domain, &cq_attr, &conn->cq, context);
-	if (ret) {
-		ERR_FI(ret, "fi_cq_open");
-		goto err_cq_open;
-	}
-
-	/*
-	 * Bind completion queue to the endpoint.
-	 * Use a single completion queue for outbound and inbound work
-	 * requests. Use selective completion implies adding FI_COMPLETE
-	 * flag to each WR which needs a completion.
-	 */
-	ret = fi_ep_bind(conn->ep, &conn->cq->fid,
-			 FI_RECV | FI_TRANSMIT | FI_SELECTIVE_COMPLETION);
-	if (ret) {
-		ERR_FI(ret, "fi_ep_bind(cq)");
-		goto err_bind_cq;
-	}
-
-	/* enable the endpoint */
-	ret = fi_enable(conn->ep);
-	if (ret) {
-		ERR_FI(ret, "fi_enable");
-		goto err_enable;
-	}
+	conn->id = id;
 
 	return 0;
 
-err_enable:
-err_bind_cq:
-err_cq_open:
-err_bind_eq:
-	rpma_utils_res_close(&conn->ep->fid, "ep");
+err_create_qp:
+	ibv_destroy_cq(conn->cq);
+	conn->cq = NULL;
 	return ret;
 }
 
 static int
-ep_fini(struct rpma_connection *conn)
+id_fini(struct rpma_connection *conn)
 {
-	if (conn->ep)
-		rpma_utils_res_close(&conn->ep->fid, "ep");
+	int ret = 0;
 
-	if (conn->cq)
-		rpma_utils_res_close(&conn->cq->fid, "cq");
+	if (!conn->id)
+		return 0;
+
+	if (conn->id->qp) {
+		int ret = ibv_destroy_qp(conn->id->qp);
+		if (ret) {
+			ERR_STR(ret, "ibv_destroy_qp");
+			return -ret; /* XXX macro? */
+		}
+	}
+
+	if (conn->cq) {
+		ret = ibv_destroy_cq(conn->cq);
+		if (ret) {
+			ERR_STR(ret, "ibv_destroy_cq");
+			return -ret; /* XXX macro? */
+		}
+	}
 
 	return 0;
 }
@@ -164,7 +156,7 @@ static int
 recv_post_all(struct rpma_connection *conn)
 {
 	int ret;
-	void *ptr = conn->recv_buff->ptr;
+	void *ptr = conn->recv.buff->ptr;
 
 	for (uint64_t i = 0; i < conn->zone->recv_queue_length; ++i) {
 		ret = rpma_connection_recv_post(conn, ptr);
@@ -179,7 +171,7 @@ recv_post_all(struct rpma_connection *conn)
 int
 rpma_connection_accept(struct rpma_connection *conn)
 {
-	int ret = ep_init(conn, conn->zone->conn_req_info);
+	int ret = id_init(conn, conn->zone->edata->id);
 	if (ret)
 		return ret;
 
@@ -187,12 +179,26 @@ rpma_connection_accept(struct rpma_connection *conn)
 	if (ret)
 		goto err_recv_post_all;
 
-	/* XXX use param buffer? */
-	ret = fi_accept(conn->ep, NULL, 0);
+	struct rdma_conn_param conn_param;
+	conn_param.private_data = NULL; /* XXX very interesting */
+	conn_param.private_data_len = 0;
+	conn_param.responder_resources = CQ_SIZE; /* XXX ? */
+	conn_param.initiator_depth = CQ_SIZE;	  /* XXX ? */
+	conn_param.flow_control = 1;		  /* XXX */
+	conn_param.retry_count = 0;		  /* ignored */
+	conn_param.rnr_retry_count = 7;		  /* max for 3-bit value */
+	/* since QP is created on this connection id srq and qp_num are ignored
+	 */
+
+	ret = rdma_accept(conn->id, &conn_param);
 	if (ret) {
-		ERR_FI(ret, "fi_enable");
+		ERR_STR(ret, "rdma_accept");
 		goto err_accept;
 	}
+
+	ret = rpma_zone_event_ack(conn->zone);
+	if (ret)
+		goto err_event_ack;
 
 	ret = rpma_zone_wait_connected(conn->zone, conn);
 	if (ret)
@@ -201,17 +207,27 @@ rpma_connection_accept(struct rpma_connection *conn)
 	return 0;
 
 err_connected:
+err_event_ack:
 err_accept:
 err_recv_post_all:
-	ep_fini(conn);
+	id_fini(conn);
 	return ret;
 }
 
 int
 rpma_connection_reject(struct rpma_zone *zone)
 {
-	/* XXX use param buffer? */
-	fi_reject(zone->pep, zone->conn_req_info->handle, NULL, 0);
+	/* XXX use private_data? */
+	int ret = rdma_reject(zone->edata->id, NULL, 0);
+	if (ret) {
+		ret = RPMA_E_ERRNO;
+		ERR_STR(ret, "rdma_reject");
+		return ret;
+	}
+
+	ret = rpma_zone_event_ack(zone);
+	if (ret)
+		return ret;
 
 	return 0;
 }
@@ -219,30 +235,68 @@ rpma_connection_reject(struct rpma_zone *zone)
 int
 rpma_connection_establish(struct rpma_connection *conn)
 {
-	int ret = ep_init(conn, conn->zone->info);
+	struct rdma_addrinfo *rai = conn->zone->rai;
+
+	int ret = rdma_create_id(NULL, &conn->id, NULL, RDMA_PS_TCP);
 	if (ret)
-		return ret;
+		return RPMA_E_ERRNO;
+
+	ret = rdma_resolve_addr(conn->id, rai->ai_src_addr, rai->ai_dst_addr,
+				RPMA_DEFAULT_TIMEOUT);
+	if (ret) {
+		ret = RPMA_E_ERRNO;
+		ERR_STR(ret, "rdma_resolve_addr");
+		goto err_resolve_addr;
+	}
+
+	ret = rdma_resolve_route(conn->id, RPMA_DEFAULT_TIMEOUT);
+	if (ret) {
+		ret = RPMA_E_ERRNO;
+		ERR_STR(ret, "rdma_resolve_route");
+		goto err_resolve_route;
+	}
+
+	ret = id_init(conn, conn->id);
+	if (ret)
+		goto err_id_init;
 
 	ret = recv_post_all(conn);
 	if (ret)
-		return ret;
+		goto err_recv_post_all;
 
-	/* XXX use param buffer? */
-	ret = fi_connect(conn->ep, conn->zone->info->dest_addr, NULL, 0);
+	struct rdma_conn_param conn_param;
+	memset(&conn_param, 0, sizeof conn_param);
+	conn_param.responder_resources = RDMA_MAX_RESP_RES;
+	conn_param.initiator_depth = RDMA_MAX_INIT_DEPTH;
+	conn_param.flow_control = 1;
+	conn_param.retry_count = 7;	/* max 3-bit value */
+	conn_param.rnr_retry_count = 7; /* max 3-bit value */
+	ret = rdma_connect(conn->id, &conn_param);
 	if (ret) {
-		ERR_FI(ret, "fi_connect");
+		ret = RPMA_E_ERRNO;
+		ERR_STR(ret, "rdma_connect");
 		goto err_connect;
 	}
 
-	ret = rpma_zone_wait_connected(conn->zone, conn);
-	if (ret)
-		goto err_connected;
+	ret = rdma_migrate_id(conn->id, conn->zone->ec);
+	if (ret) {
+		ret = RPMA_E_ERRNO;
+		ERR_STR(ret, "rdma_migrate_id");
+		goto err_migrate_id;
+	}
 
 	return 0;
 
-err_connected:
+err_migrate_id:
+	(void)rdma_disconnect(conn->id);
 err_connect:
-	ep_fini(conn);
+err_recv_post_all:
+	id_fini(conn);
+err_id_init:
+err_resolve_route:
+err_resolve_addr:
+	rdma_destroy_id(conn->id);
+	conn->id = NULL;
 	return ret;
 }
 
@@ -250,7 +304,14 @@ int
 rpma_connection_disconnect(struct rpma_connection *conn)
 {
 	/* XXX any prior messaging? */
-	fi_shutdown(conn->ep, 0);
+	int ret = rdma_disconnect(conn->id);
+	if (ret) {
+		ret = RPMA_E_ERRNO;
+		ERR_STR(ret, "rdma_disconnect");
+		return ret;
+	}
+
+	conn->disconnected = 1;
 
 	return 0;
 }
@@ -263,7 +324,13 @@ rpma_connection_delete(struct rpma_connection **conn)
 
 	ASSERTeq(ptr->disp, NULL);
 
-	ep_fini(ptr);
+	if (ptr->id && !ptr->disconnected) {
+		ret = rpma_connection_disconnect(ptr);
+		if (ret)
+			return ret;
+	}
+
+	id_fini(ptr);
 
 	ret = rpma_connection_rma_fini(ptr);
 	if (ret)
@@ -371,95 +438,69 @@ rpma_connection_register_on_recv(struct rpma_connection *conn,
 
 int
 rpma_connection_cq_entry_process(struct rpma_connection *conn,
-				 struct fi_cq_msg_entry *cq_entry)
+				 struct ibv_wc *wc)
 {
 	int ret = 0;
-	if (cq_entry->flags & FI_MSG) {
-		ASSERTeq(cq_entry->flags, FI_MSG | FI_RECV); /* XXX */
-
+	if (wc->opcode & IBV_WC_RECV) {
 		/* XXX uarg is still necesarry here? */
-		ret = conn->on_connection_recv_func(conn, cq_entry->op_context,
+		void *ptr = (void *)wc->wr_id;
+		ret = conn->on_connection_recv_func(conn, ptr,
 						    conn->zone->msg_size);
 	} else {
 		ASSERT(0);
 	}
-	/*} else if (cq_entry->flags & FI_RMA) { */
-	/* XXX conn->on_transmission_notify_func */
-	/* } */
+	/* XXX IBV_WC_RDMA_WRITE, IBV_WC_RDMA_READ */
 
 	return ret;
 }
 
 static int
-cq_entry_process_or_enqueue(struct rpma_connection *conn,
-			    struct fi_cq_msg_entry *cq_entry)
+cq_entry_process_or_enqueue(struct rpma_connection *conn, struct ibv_wc *wc)
 {
 	if (conn->disp)
-		return rpma_dispatcher_enqueue_cq_entry(conn->disp, conn,
-							cq_entry);
+		return rpma_dispatcher_enqueue_cq_entry(conn->disp, conn, wc);
 
-	return rpma_connection_cq_entry_process(conn, cq_entry);
-}
-
-#define CQ_DEFAULT_TIMEOUT 1000
-
-static int
-cq_read_err(struct rpma_connection *conn)
-{
-	struct fi_cq_err_entry err;
-	const char *str_err;
-
-	int ret = (int)fi_cq_readerr(conn->cq, &err, 0);
-	if (ret < 0) {
-		ERR_FI(ret, "fi_cq_readerr");
-		return ret;
-	}
-
-	str_err = fi_cq_strerror(conn->cq, err.prov_errno, NULL, NULL, 0);
-	ERR("CQ error: %s", str_err);
-
-	return err.prov_errno;
+	return rpma_connection_cq_entry_process(conn, wc);
 }
 
 static inline int
-cq_read(struct rpma_connection *conn, struct fi_cq_msg_entry *cq_entry)
+cq_read(struct rpma_connection *conn, struct ibv_wc *wc)
 {
-	int ret = (int)fi_cq_sread(conn->cq, cq_entry, 1, NULL,
-				   CQ_DEFAULT_TIMEOUT);
-	if (ret == -FI_EAGAIN)
+	int ret = ibv_poll_cq(conn->cq, 1 /* num_entries */, wc);
+	if (ret == 0)
 		return 0;
-	if (ret == -FI_EAVAIL)
-		return cq_read_err(conn);
 	if (ret < 0) {
-		ERR_FI(ret, "fi_cq_sread");
+		ERR_STR(ret, "ibv_poll_cq");
 		return ret;
 	}
 
-	ASSERTeq(ret, 1); /* XXX ? */
+	ASSERTeq(ret, 1);
+	ASSERTeq(wc->status, IBV_WC_SUCCESS); /* XXX */
+
 	return ret;
 }
 
 int
-rpma_connection_cq_wait(struct rpma_connection *conn, uint64_t flags,
-			void *op_context)
+rpma_connection_cq_wait(struct rpma_connection *conn, enum ibv_wc_opcode opcode,
+			uint64_t wr_id)
 {
-	struct fi_cq_msg_entry cq_entry;
+	struct ibv_wc wc;
 	int ret;
 	int mismatch;
 
 	/* XXX additional stop condition? */
 	while (1) {
-		ret = cq_read(conn, &cq_entry);
+		ret = cq_read(conn, &wc);
 		if (ret == 0)
 			continue;
 		else if (ret < 0)
 			return ret;
 
-		mismatch = !(cq_entry.flags & flags);
-		mismatch |= (cq_entry.op_context != op_context);
+		mismatch = (wc.opcode != opcode);
+		mismatch |= (wc.wr_id != wr_id);
 
 		if (mismatch) {
-			ret = cq_entry_process_or_enqueue(conn, &cq_entry);
+			ret = cq_entry_process_or_enqueue(conn, &wc);
 			if (ret) {
 				/* XXX */
 				ASSERT(0);
@@ -477,18 +518,17 @@ rpma_connection_cq_wait(struct rpma_connection *conn, uint64_t flags,
 int
 rpma_connection_cq_process(struct rpma_connection *conn)
 {
-	struct fi_cq_msg_entry cq_entry;
+	struct ibv_wc wc;
 	int ret;
 
-	/* XXX stop condition? */
 	while (1) {
-		ret = cq_read(conn, &cq_entry);
+		ret = cq_read(conn, &wc);
 		if (ret == 0)
 			break;
 		else if (ret < 0)
 			return ret;
 
-		ret = rpma_connection_cq_entry_process(conn, &cq_entry);
+		ret = rpma_connection_cq_entry_process(conn, &wc);
 		if (ret)
 			return ret;
 	}

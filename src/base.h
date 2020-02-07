@@ -1,5 +1,5 @@
 /*
- * Copyright 2019, Intel Corporation
+ * Copyright 2019-2020, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -53,9 +53,9 @@ extern "C" {
 #define RPMA_E_NOSUPP (-100001)
 #define RPMA_E_NEGATIVE_TIMEOUT (-100002)
 #define RPMA_E_NOT_LISTENING (-100003)
-#define RPMA_E_EQ_READ (-100004)
-#define RPMA_E_EQ_EVENT (-100005)
-#define RPMA_E_EQ_EVENT_DATA (-100006)
+#define RPMA_E_EC_READ (-100004)
+#define RPMA_E_EC_EVENT (-100005)
+#define RPMA_E_EC_EVENT_DATA (-100006)
 #define RPMA_E_UNHANDLED_EVENT (-100007)
 #define RPMA_E_UNKNOWN_CONNECTION (-100008)
 

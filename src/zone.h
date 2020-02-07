@@ -1,5 +1,5 @@
 /*
- * Copyright 2019, Intel Corporation
+ * Copyright 2019-2020, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,16 +36,21 @@
 #ifndef RPMA_ZONE_H
 #define RPMA_ZONE_H
 
+#include <infiniband/verbs.h>
 #include <librpma.h>
 
 struct rpma_zone {
-	struct fi_info *info;	   /* fabric interface information */
-	struct fid_fabric *fabric; /* fabric domain */
-	struct fid_domain *domain; /* fabric protection domain */
-	struct fid_eq *eq;	   /* event queue */
+	struct rdma_addrinfo *rai;
 
-	struct fid_pep *pep; /* passive endpoint - listener */
-	struct fi_info *conn_req_info;
+	struct rdma_event_channel *ec;
+	int ec_epoll;
+
+	struct ibv_context *device;
+	struct ibv_pd *pd;
+
+	struct rdma_cm_id *listen_id;
+	struct rdma_cm_event *edata;
+
 	void *uarg;
 	uint64_t active_connections;
 	struct ravl *connections;
@@ -64,6 +69,7 @@ struct rpma_zone {
 	unsigned flags;
 };
 
+int rpma_zone_event_ack(struct rpma_zone *zone);
 int rpma_zone_wait_connected(struct rpma_zone *zone,
 			     struct rpma_connection *conn);
 

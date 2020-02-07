@@ -1,5 +1,5 @@
 /*
- * Copyright 2019, Intel Corporation
+ * Copyright 2019-2020, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,8 +35,6 @@
  */
 
 #include <base.h>
-#include <rdma/fi_domain.h>
-#include <rdma/fi_eq.h>
 
 #include "alloc.h"
 #include "connection.h"
@@ -50,7 +48,7 @@ static int
 dispatcher_init(struct rpma_dispatcher *disp)
 {
 	PMDK_TAILQ_INIT(&disp->conn_set);
-	PMDK_TAILQ_INIT(&disp->queue_cqe);
+	PMDK_TAILQ_INIT(&disp->queue_wce);
 	PMDK_TAILQ_INIT(&disp->queue_func);
 
 	os_mutex_init(&disp->queue_func_mtx);
@@ -64,10 +62,10 @@ dispatcher_fini(struct rpma_dispatcher *disp)
 	os_mutex_destroy(&disp->queue_func_mtx);
 
 	/* XXX is it ok? */
-	while (!PMDK_TAILQ_EMPTY(&disp->queue_cqe)) {
-		struct rpma_dispatcher_cq_entry *e =
-			PMDK_TAILQ_FIRST(&disp->queue_cqe);
-		PMDK_TAILQ_REMOVE(&disp->queue_cqe, e, next);
+	while (!PMDK_TAILQ_EMPTY(&disp->queue_wce)) {
+		struct rpma_dispatcher_wc_entry *e =
+			PMDK_TAILQ_FIRST(&disp->queue_wce);
+		PMDK_TAILQ_REMOVE(&disp->queue_wce, e, next);
 		Free(e);
 	}
 
@@ -180,7 +178,7 @@ dispatcher_cqs_process(struct rpma_dispatcher *disp)
 int
 rpma_dispatch(struct rpma_dispatcher *disp)
 {
-	struct rpma_dispatcher_cq_entry *cqe;
+	struct rpma_dispatcher_wc_entry *wce;
 	struct rpma_dispatcher_func_entry *funce;
 	int ret;
 
@@ -193,14 +191,14 @@ rpma_dispatch(struct rpma_dispatcher *disp)
 			return ret;
 
 		/* process cached CQ entries */
-		while (!PMDK_TAILQ_EMPTY(&disp->queue_cqe)) {
-			cqe = PMDK_TAILQ_FIRST(&disp->queue_cqe);
-			PMDK_TAILQ_REMOVE(&disp->queue_cqe, cqe, next);
+		while (!PMDK_TAILQ_EMPTY(&disp->queue_wce)) {
+			wce = PMDK_TAILQ_FIRST(&disp->queue_wce);
+			PMDK_TAILQ_REMOVE(&disp->queue_wce, wce, next);
 
-			ret = rpma_connection_cq_entry_process(cqe->conn,
-							       &cqe->cq_entry);
+			ret = rpma_connection_cq_entry_process(wce->conn,
+							       NULL /* wc */);
 			ASSERTeq(ret, 0); /* XXX */
-			Free(cqe);
+			Free(wce);
 		}
 
 		while (!PMDK_TAILQ_EMPTY(&disp->queue_func)) {
@@ -226,16 +224,16 @@ rpma_dispatch_break(struct rpma_dispatcher *disp)
 int
 rpma_dispatcher_enqueue_cq_entry(struct rpma_dispatcher *disp,
 				 struct rpma_connection *conn,
-				 struct fi_cq_msg_entry *cq_entry)
+				 struct ibv_wc *wc)
 {
-	struct rpma_dispatcher_cq_entry *entry = Malloc(sizeof(*entry));
+	struct rpma_dispatcher_wc_entry *entry = Malloc(sizeof(*entry));
 	if (!entry)
 		return RPMA_E_ERRNO;
 
 	entry->conn = conn;
-	memcpy(&entry->cq_entry, cq_entry, sizeof(*cq_entry));
+	memcpy(&entry->wc, wc, sizeof(*wc));
 
-	PMDK_TAILQ_INSERT_TAIL(&disp->queue_cqe, entry, next);
+	PMDK_TAILQ_INSERT_TAIL(&disp->queue_wce, entry, next);
 
 	return 0;
 }

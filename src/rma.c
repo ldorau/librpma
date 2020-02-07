@@ -1,5 +1,5 @@
 /*
- * Copyright 2019, Intel Corporation
+ * Copyright 2019-2020, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,7 +35,6 @@
  */
 
 #include <errno.h>
-#include <rdma/fi_rma.h>
 
 #include "alloc.h"
 #include "connection.h"
@@ -57,7 +56,7 @@ raw_buffer_init(struct rpma_connection *conn)
 		return RPMA_E_ERRNO;
 
 	int ret = rpma_memory_local_new(conn->zone, ptr, RAW_BUFF_SIZE,
-					RPMA_MR_READ_DST, &conn->raw_dst);
+					RPMA_MR_READ_DST, &conn->rma.raw_dst);
 	if (ret)
 		goto err_mem_local_new;
 
@@ -72,11 +71,11 @@ static int
 raw_buffer_fini(struct rpma_connection *conn)
 {
 	void *ptr;
-	int ret = rpma_memory_local_get_ptr(conn->raw_dst, &ptr);
+	int ret = rpma_memory_local_get_ptr(conn->rma.raw_dst, &ptr);
 	if (ret)
 		return ret;
 
-	ret = rpma_memory_local_delete(&conn->raw_dst);
+	ret = rpma_memory_local_delete(&conn->rma.raw_dst);
 	if (ret)
 		return ret;
 
@@ -89,16 +88,14 @@ int
 rpma_connection_rma_init(struct rpma_connection *conn)
 {
 	/* initialize RMA msg */
-	struct fi_msg_rma *rma = &conn->rma.msg;
-	conn->rma.flags = 0;
-	rma->desc = &conn->rma.desc;
-	rma->addr = 0;
-	rma->context = NULL; /* XXX */
-	rma->rma_iov = &conn->rma.rma_iov;
-	rma->rma_iov_count = 1;
-	rma->iov_count = 1;
-	rma->msg_iov = &conn->rma.msg_iov;
-	rma->iov_count = 1;
+	struct ibv_send_wr *wr = &conn->rma.wr;
+	struct ibv_sge *sge = &conn->rma.sge;
+
+	memset(wr, 0, sizeof(*wr));
+	wr->wr_id = 0;
+	wr->next = NULL;
+	wr->sg_list = sge;
+	wr->num_sge = 1;
 
 	return raw_buffer_init(conn);
 }
@@ -115,37 +112,38 @@ rpma_connection_read(struct rpma_connection *conn,
 		     struct rpma_memory_remote *src, size_t src_off,
 		     size_t length)
 {
-	ASSERT(length < conn->zone->info->ep_attr->max_msg_size); /* XXX */
+	//	ASSERT(length < conn->zone->info->ep_attr->max_msg_size); /* XXX
+	//*/
+	ASSERT(length < UINT32_MAX);
 
 	/* XXX WQ flush */
 
-	void *dst_addr = (void *)((uintptr_t)dst->ptr + dst_off);
-	;
+	uint64_t dst_addr = (uint64_t)((uintptr_t)dst->ptr + dst_off);
 
-	struct fi_msg_rma *rma = &conn->rma.msg;
+	struct ibv_send_wr *wr = &conn->rma.wr;
+	struct ibv_sge *sge = &conn->rma.sge;
 
 	/* src */
-	conn->rma.rma_iov.addr = src->raddr + src_off;
-	conn->rma.rma_iov.len = length;
-	conn->rma.rma_iov.key = src->rkey;
+	wr->wr.rdma.remote_addr = src->raddr + src_off;
+	wr->wr.rdma.rkey = src->rkey;
 
 	/* dst */
-	conn->rma.msg_iov.iov_base = dst_addr;
-	conn->rma.msg_iov.iov_len = length;
-	conn->rma.desc = dst->desc;
+	sge->addr = dst_addr;
+	sge->length = (uint32_t)length;
+	sge->lkey = dst->mr->lkey;
 
-	rma->context = dst_addr; /* XXX */
+	wr->wr_id = dst_addr;
+	wr->opcode = IBV_WR_RDMA_READ;
+	wr->send_flags = IBV_SEND_SIGNALED;
 
-	uint64_t flags = conn->rma.flags;
-	flags |= FI_COMPLETION;
-
-	int ret = (int)fi_readmsg(conn->ep, rma, flags);
+	struct ibv_send_wr *bad_wr;
+	int ret = ibv_post_send(conn->id->qp, wr, &bad_wr);
 	if (ret) {
-		ERR_FI(ret, "fi_readmsg");
+		ERR_STR(ret, "ibv_post_send");
 		return ret;
 	}
 
-	ret = rpma_connection_cq_wait(conn, FI_READ, dst_addr);
+	ret = rpma_connection_cq_wait(conn, IBV_WC_RDMA_READ, dst_addr);
 	if (ret)
 		return ret;
 
@@ -158,31 +156,38 @@ rpma_connection_write(struct rpma_connection *conn,
 		      struct rpma_memory_local *src, size_t src_off,
 		      size_t length)
 {
-	ASSERT(length < conn->zone->info->ep_attr->max_msg_size); /* XXX */
+	//	ASSERT(length < conn->zone->info->ep_attr->max_msg_size); /* XXX
+	//*/
+	ASSERT(length < UINT32_MAX);
 
 	/* XXX WQ flush */
 
-	struct rpma_rma *rma = &conn->rma;
-	struct fi_msg_rma *msg = &rma->msg;
+	uint64_t src_addr = (uint64_t)((uintptr_t)src->ptr + src_off);
+
+	struct ibv_send_wr *wr = &conn->rma.wr;
+	struct ibv_sge *sge = &conn->rma.sge;
 
 	/* src */
-	rma->msg_iov.iov_base = (void *)((uintptr_t)src->ptr + src_off);
-	rma->msg_iov.iov_len = length;
-	rma->desc = src->desc;
+	sge->addr = src_addr;
+	sge->length = (uint32_t)length;
+	sge->lkey = src->mr->lkey;
 
 	/* dst */
-	rma->rma_iov.addr = dst->raddr + dst_off;
-	rma->rma_iov.len = length;
-	rma->rma_iov.key = dst->rkey;
+	wr->wr.rdma.remote_addr = dst->raddr + dst_off;
+	wr->wr.rdma.rkey = dst->rkey;
 
-	int ret = (int)fi_writemsg(conn->ep, msg, conn->rma.flags);
+	wr->wr_id = 0;
+	wr->opcode = IBV_WR_RDMA_WRITE;
+	wr->send_flags = 0; /* !IBV_SEND_SIGNALED */
+
+	struct ibv_send_wr *bad_wr;
+	int ret = ibv_post_send(conn->id->qp, wr, &bad_wr);
 	if (ret) {
-		ERR_FI(ret, "fi_writemsg");
-		return (int)ret;
+		ERR_STR(ret, "ibv_post_send");
+		return ret;
 	}
 
-	/* XXX */
-	conn->raw_src = dst;
+	conn->rma.raw_src = dst; /* XXX */
 
 	return 0;
 }
@@ -200,6 +205,6 @@ rpma_connection_atomic_write(struct rpma_connection *conn,
 int
 rpma_connection_commit(struct rpma_connection *conn)
 {
-	return rpma_connection_read(conn, conn->raw_dst, 0, conn->raw_src, 0,
-				    RAW_SIZE);
+	return rpma_connection_read(conn, conn->rma.raw_dst, 0,
+				    conn->rma.raw_src, 0, RAW_SIZE);
 }

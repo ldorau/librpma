@@ -1,5 +1,5 @@
 /*
- * Copyright 2019, Intel Corporation
+ * Copyright 2019-2020, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -45,11 +45,11 @@ struct rpma_dispatcher_conn {
 	struct rpma_connection *conn;
 };
 
-struct rpma_dispatcher_cq_entry {
-	PMDK_TAILQ_ENTRY(rpma_dispatcher_cq_entry) next;
+struct rpma_dispatcher_wc_entry {
+	PMDK_TAILQ_ENTRY(rpma_dispatcher_wc_entry) next;
 
 	struct rpma_connection *conn;
-	struct fi_cq_msg_entry cq_entry;
+	struct ibv_wc wc;
 };
 
 struct rpma_dispatcher_func_entry {
@@ -67,7 +67,7 @@ struct rpma_dispatcher {
 
 	uint64_t waiting;
 
-	PMDK_TAILQ_HEAD(head_cq, rpma_dispatcher_cq_entry) queue_cqe;
+	PMDK_TAILQ_HEAD(head_cq, rpma_dispatcher_wc_entry) queue_wce;
 
 	os_mutex_t queue_func_mtx;
 	PMDK_TAILQ_HEAD(head_fq, rpma_dispatcher_func_entry) queue_func;
@@ -83,7 +83,7 @@ int rpma_dispatch_break(struct rpma_dispatcher *disp);
 
 int rpma_dispatcher_enqueue_cq_entry(struct rpma_dispatcher *disp,
 				     struct rpma_connection *conn,
-				     struct fi_cq_msg_entry *cq_entry);
+				     struct ibv_wc *wc);
 int rpma_dispatcher_enqueue_func(struct rpma_dispatcher *disp,
 				 struct rpma_connection *conn,
 				 rpma_queue_func func, void *arg);

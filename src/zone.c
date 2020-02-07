@@ -1,5 +1,5 @@
 /*
- * Copyright 2019, Intel Corporation
+ * Copyright 2019-2020, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,12 +35,12 @@
  */
 
 #include <arpa/inet.h>
+#include <infiniband/verbs.h>
 #include <netinet/in.h>
-#include <rdma/fabric.h>
-#include <rdma/fi_cm.h>
-#include <rdma/fi_endpoint.h>
-#include <rdma/fi_eq.h>
-#include <stdint.h>
+#include <rdma/rdma_cma.h>
+#include <sys/epoll.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include <librpma.h>
 
@@ -52,132 +52,108 @@
 #include "valgrind_internal.h"
 #include "zone.h"
 
-#ifdef RPMA_USE_SOCKETS
-#define PROVIDER_STR "sockets"
-#else
-#define PROVIDER_STR "verbs"
-#endif
-
-#define RX_TX_SIZE 256 /* XXX */
-#define RPMA_FIVERSION FI_VERSION(1, 4)
-#define DEFAULT_TIMEOUT 1000
-
-#define EQ_TIMEOUT 1
-#define EQ_ERR 2
+// #define RX_TX_SIZE 256 /* XXX */
 
 static int
-hints_new(struct fi_info **hints_ptr)
+info_new(struct rpma_config *cfg, struct rdma_addrinfo **rai)
 {
-	struct fi_info *hints = fi_allocinfo();
-	if (!hints) {
-		ERR("!fi_allocinfo");
+	/* prepare hints */
+	struct rdma_addrinfo hints;
+	memset(&hints, 0, sizeof(hints));
+	if (cfg->flags & RPMA_CONFIG_IS_SERVER)
+		hints.ai_flags |= RAI_PASSIVE;
+	hints.ai_qp_type = IBV_QPT_RC;
+	hints.ai_port_space = RDMA_PS_TCP;
+
+	/* query */
+	int ret = rdma_getaddrinfo(cfg->addr, cfg->service, &hints, rai);
+	if (ret)
 		return RPMA_E_ERRNO;
-	}
-
-	/* connection-oriented endpoint */
-	hints->ep_attr->type = FI_EP_MSG;
-
-	/*
-	 * Basic memory registration mode indicates that MR attributes
-	 * (rkey, lkey) are selected by provider.
-	 */
-	hints->domain_attr->mr_mode = FI_MR_BASIC;
-
-	/*
-	 * FI_THREAD_SAFE indicates MT applications can access any
-	 * resources through interface without any restrictions
-	 */
-	hints->domain_attr->threading = FI_THREAD_SAFE;
-
-	/*
-	 * FI_MSG - SEND and RECV
-	 * FI_RMA - WRITE and READ
-	 */
-	hints->caps = FI_MSG | FI_RMA;
-
-	/* must register locally accessed buffers */
-	hints->mode = FI_CONTEXT | FI_LOCAL_MR | FI_RX_CQ_DATA;
-
-	/* READ-after-WRITE and SEND-after-WRITE message ordering required */
-	hints->tx_attr->msg_order = FI_ORDER_RAW | FI_ORDER_SAW;
-
-	hints->addr_format = FI_SOCKADDR;
-
-	hints->fabric_attr->prov_name = strdup(PROVIDER_STR);
-	if (!hints->fabric_attr->prov_name) {
-		ERR("!strdup");
-		goto err_strdup;
-	}
-
-	hints->tx_attr->size = RX_TX_SIZE;
-	hints->rx_attr->size = RX_TX_SIZE;
-
-	*hints_ptr = hints;
 
 	return 0;
-
-err_strdup:
-	Free(hints);
-	return RPMA_E_ERRNO;
 }
 
 static void
-hints_delete(struct fi_info **hints)
+info_delete(struct rdma_addrinfo **rai)
 {
-	struct fi_info *ptr = *hints;
-
-	Free(ptr->fabric_attr->prov_name);
-	ptr->fabric_attr->prov_name = NULL;
-
-	rpma_utils_freeinfo(hints);
+	rdma_freeaddrinfo(*rai);
+	*rai = NULL;
 }
 
 static int
-info_new(struct rpma_config *cfg, struct fi_info **info)
+device_get(struct rdma_addrinfo *rai, struct ibv_context **device)
 {
-	struct fi_info *hints = NULL;
-	int ret = hints_new(&hints);
+	struct rdma_cm_id *temp_id;
+	int ret = rdma_create_id(NULL, &temp_id, NULL, RDMA_PS_TCP);
 	if (ret)
-		return ret;
+		return RPMA_E_ERRNO;
 
-	uint64_t flags = 0;
-	if (cfg->flags & RPMA_CONFIG_IS_SERVER)
-		flags |= FI_SOURCE;
-
-	ret = fi_getinfo(RPMA_FIVERSION, cfg->addr, cfg->service, flags, hints,
-			 info);
-	if (ret) {
-		ERR_FI(ret, "fi_getinfo");
-		goto err_getinfo;
+	if (rai->ai_flags & RAI_PASSIVE) {
+		ret = rdma_bind_addr(temp_id, rai->ai_src_addr);
+		if (ret) {
+			ret = RPMA_E_ERRNO;
+			goto err_bind_addr;
+		}
+	} else {
+		ret = rdma_resolve_addr(temp_id, rai->ai_src_addr,
+					rai->ai_dst_addr, RPMA_DEFAULT_TIMEOUT);
+		if (ret) {
+			ret = RPMA_E_ERRNO;
+			goto err_resolve_addr;
+		}
 	}
 
-err_getinfo:
-	hints_delete(&hints);
+	*device = temp_id->verbs;
+
+err_bind_addr:
+err_resolve_addr:
+	(void)rdma_destroy_id(temp_id);
 	return ret;
 }
 
-static void
-info_delete(struct fi_info **info_ptr)
+static int
+epoll_init(struct rpma_zone *zone)
 {
-	rpma_utils_freeinfo(info_ptr);
+	int ret = 0;
+
+	ret = rpma_utils_fd_set_nonblock(zone->ec->fd);
+	if (ret)
+		return ret;
+
+	zone->ec_epoll = epoll_create1(EPOLL_CLOEXEC);
+	if (zone->ec_epoll < 0) {
+		ret = RPMA_E_ERRNO;
+		ERR_STR(ret, "epoll_create1");
+		return ret;
+	}
+
+	struct epoll_event event;
+	event.events = EPOLLIN;
+	event.data.ptr = NULL;
+
+	ret = epoll_ctl(zone->ec_epoll, EPOLL_CTL_ADD, zone->ec->fd, &event);
+	if (ret < 0) {
+		ret = RPMA_E_ERRNO;
+		ERR_STR(ret, "epoll_ctl(EPOLL_CTL_ADD)");
+		goto err_add;
+	}
+
+	return 0;
+
+err_add:
+	close(zone->ec_epoll);
+	zone->ec_epoll = RPMA_FD_INVALID;
+	return ret;
 }
 
 static int
-eq_new(struct fid_fabric *fabric, struct fid_eq **eq_ptr)
+epoll_fini(struct rpma_zone *zone)
 {
-	struct fi_eq_attr eq_attr = {
-		.size = 0, /* use default value */
-		.flags = 0,
-		.wait_obj = FI_WAIT_UNSPEC,
-		.signaling_vector = 0,
-		.wait_set = NULL,
-	};
+	int ret = close(zone->ec_epoll);
+	if (ret)
+		return RPMA_E_ERRNO;
 
-	int ret = fi_eq_open(fabric, &eq_attr, eq_ptr, NULL);
-	if (ret) {
-		ERR_FI(ret, "fi_eq_open");
-		return ret;
-	}
+	zone->ec_epoll = RPMA_FD_INVALID;
 
 	return 0;
 }
@@ -185,104 +161,74 @@ eq_new(struct fid_fabric *fabric, struct fid_eq **eq_ptr)
 static int
 zone_init(struct rpma_config *cfg, struct rpma_zone *zone)
 {
-	int ret = info_new(cfg, &zone->info);
+	int ret = info_new(cfg, &zone->rai);
 	if (ret)
 		return ret;
 
-	ret = fi_fabric(zone->info->fabric_attr, &zone->fabric, NULL);
-	if (ret) {
-		ERR_FI(ret, "fi_fabric");
-		goto err_fabric;
-	}
-
-	ret = fi_domain(zone->fabric, zone->info, &zone->domain, NULL);
-	if (ret) {
-		ERR_FI(ret, "fi_domain");
-		goto err_domain;
-	}
-
-	ret = eq_new(zone->fabric, &zone->eq);
+	ret = device_get(zone->rai, &zone->device);
 	if (ret)
-		goto err_eq;
+		goto err_device_get;
+
+	/* protection domain */
+	zone->pd = ibv_alloc_pd(zone->device);
+	if (!zone->pd) {
+		ret = RPMA_E_UNKNOWN; /* XXX */
+		goto err_alloc_pd;
+	}
+
+	/* event channel */
+	zone->ec = rdma_create_event_channel();
+	if (!zone->ec) {
+		ret = RPMA_E_ERRNO;
+		goto err_create_event_channel;
+	}
+
+	ret = epoll_init(zone);
+	if (ret)
+		goto err_epoll_init;
 
 	return 0;
 
-err_eq:
-	rpma_utils_res_close(&zone->domain->fid, "domain");
-err_domain:
-	rpma_utils_res_close(&zone->fabric->fid, "fabric");
-err_fabric:
-	info_delete(&zone->info);
+err_epoll_init:
+	(void)rdma_destroy_event_channel(zone->ec);
+	zone->ec = NULL;
+err_create_event_channel:
+	(void)ibv_dealloc_pd(zone->pd);
+err_alloc_pd:
+err_device_get:
+	info_delete(&zone->rai);
 	return ret;
 }
 
 static void
 zone_fini(struct rpma_zone *zone)
 {
-	if (zone->pep)
-		rpma_utils_res_close(&zone->pep->fid, "pep");
-
-	if (zone->eq)
-		rpma_utils_res_close(&zone->eq->fid, "eq");
-
-	if (zone->domain)
-		rpma_utils_res_close(&zone->domain->fid, "domain");
-
-	if (zone->fabric)
-		rpma_utils_res_close(&zone->fabric->fid, "fabric");
-
-	info_delete(&zone->info);
+	if (zone->ec_epoll != RPMA_FD_INVALID)
+		epoll_fini(zone);
+	if (zone->listen_id)
+		rdma_destroy_id(zone->listen_id);
+	if (zone->ec)
+		rdma_destroy_event_channel(zone->ec);
+	if (zone->pd)
+		ibv_dealloc_pd(zone->pd);
 }
 
-struct ep_conn_pair {
-	fid_t ep_fid;
+struct id_conn_pair {
+	struct rdma_cm_id *id;
 	struct rpma_connection *conn;
 };
 
 static int
-ep_conn_pair_compare(const void *lhs, const void *rhs)
+id_conn_pair_compare(const void *lhs, const void *rhs)
 {
-	const struct ep_conn_pair *l = lhs;
-	const struct ep_conn_pair *r = rhs;
+	const struct id_conn_pair *l = lhs;
+	const struct id_conn_pair *r = rhs;
 
-	int64_t diff = (int64_t)l->ep_fid - (int64_t)r->ep_fid;
+	intptr_t diff = (intptr_t)l->id - (intptr_t)r->id;
 	if (diff != 0)
 		return diff > 0 ? 1 : -1;
 
 	return 0;
-}
-
-static void
-conn_store(struct ravl *store, struct rpma_connection *conn)
-{
-	struct ep_conn_pair *pair = Malloc(sizeof(*pair));
-	pair->ep_fid = &conn->ep->fid;
-	pair->conn = conn;
-
-	ravl_insert(store, pair);
-}
-
-static struct rpma_connection *
-conn_restore(struct ravl *store, fid_t ep_fid)
-{
-	struct ep_conn_pair to_find;
-	to_find.ep_fid = ep_fid;
-	to_find.conn = NULL;
-
-	struct ravl_node *node =
-		ravl_find(store, &to_find, RAVL_PREDICATE_EQUAL);
-	if (!node)
-		return NULL;
-
-	struct ep_conn_pair *found = ravl_data(node);
-	if (!found)
-		return NULL;
-
-	struct rpma_connection *ret = found->conn;
-	Free(found);
-	ravl_remove(store, node);
-
-	return ret;
 }
 
 int
@@ -292,22 +238,20 @@ rpma_zone_new(struct rpma_config *cfg, struct rpma_zone **zone)
 	if (!ptr)
 		return RPMA_E_ERRNO;
 
-	ptr->info = NULL;
-	ptr->fabric = NULL;
-	ptr->domain = NULL;
-	ptr->eq = NULL;
-
-	ptr->pep = NULL;
-	ptr->conn_req_info = NULL;
+	ptr->ec = NULL;
+	ptr->ec_epoll = RPMA_FD_INVALID;
+	ptr->device = NULL;
+	ptr->pd = NULL;
+	ptr->listen_id = NULL;
 	ptr->uarg = NULL;
 	ptr->active_connections = 0;
-	ptr->connections = ravl_new(ep_conn_pair_compare);
+	ptr->connections = ravl_new(id_conn_pair_compare);
 
 	ptr->waiting = 0;
 
 	ptr->on_connection_event_func = NULL;
 	ptr->on_timeout_func = NULL;
-	ptr->timeout = DEFAULT_TIMEOUT;
+	ptr->timeout = RPMA_DEFAULT_TIMEOUT;
 
 	ptr->msg_size = cfg->msg_size;
 	ptr->send_queue_length = cfg->send_queue_length;
@@ -329,28 +273,22 @@ err_free:
 }
 
 static void
-pep_dump(struct rpma_zone *zone)
+listen_dump(struct rpma_zone *zone)
 {
+	struct sockaddr_in *addr_in;
 	const char *addr;
 	unsigned short port;
 
-	if (zone->info->addr_format == FI_SOCKADDR_IN) {
-		struct sockaddr_in addr_in;
-		size_t addrlen = sizeof(addr_in);
+	if (zone->rai->ai_family == AF_INET) {
+		addr_in = (struct sockaddr_in *)zone->rai->ai_src_addr;
 
-		int ret = fi_getname(&zone->pep->fid, &addr_in, &addrlen);
-		if (ret) {
-			ERR_FI(ret, "fi_getname");
+		if (!addr_in->sin_port) {
+			ERR("addr_in->sin_por == 0");
 			return;
 		}
 
-		if (!addr_in.sin_port) {
-			ERR("addr_in.sin_por == 0");
-			return;
-		}
-
-		addr = inet_ntoa(addr_in.sin_addr);
-		port = htons(addr_in.sin_port);
+		addr = inet_ntoa(addr_in->sin_addr);
+		port = htons(addr_in->sin_port);
 
 		fprintf(stderr, "Started listening on %s:%u\n", addr, port);
 	} else {
@@ -361,32 +299,32 @@ pep_dump(struct rpma_zone *zone)
 static int
 zone_listen(struct rpma_zone *zone)
 {
-	int ret = fi_passive_ep(zone->fabric, zone->info, &zone->pep, NULL);
+	ASSERT(zone->flags & RPMA_CONFIG_IS_SERVER);
+
+	int ret = rdma_create_id(zone->ec, &zone->listen_id, NULL, RDMA_PS_TCP);
+	if (ret)
+		return RPMA_E_ERRNO;
+
+	ret = rdma_bind_addr(zone->listen_id, zone->rai->ai_src_addr);
 	if (ret) {
-		ERR_FI(ret, "fi_passive_ep");
-		return ret;
+		ret = RPMA_E_ERRNO;
+		goto err_bind_addr;
 	}
 
-	ret = fi_pep_bind(zone->pep, &zone->eq->fid, 0);
+	ret = rdma_listen(zone->listen_id, 0 /* backlog */);
 	if (ret) {
-		ERR_FI(ret, "fi_pep_bind");
-		goto err_pep_bind;
+		ret = RPMA_E_ERRNO;
+		goto err_listen;
 	}
 
-	ret = fi_listen(zone->pep);
-	if (ret) {
-		ERR_FI(ret, "fi_listen");
-		goto err_pep_listen;
-	}
-
-	pep_dump(zone);
+	listen_dump(zone);
 
 	return 0;
 
-err_pep_listen:
-err_pep_bind:
-	rpma_utils_res_close(&zone->pep->fid, "pep");
-	zone->pep = NULL;
+err_listen:
+err_bind_addr:
+	rdma_destroy_id(zone->listen_id);
+	zone->listen_id = NULL;
 	return ret;
 }
 
@@ -429,36 +367,66 @@ int
 rpma_zone_unregister_on_timeout(struct rpma_zone *zone)
 {
 	zone->on_timeout_func = NULL;
-	zone->timeout = DEFAULT_TIMEOUT;
+	zone->timeout = RPMA_DEFAULT_TIMEOUT;
 	return 0;
 }
 
+#define EC_TIMEOUT 1
+#define EC_ERR 2
+
+#define MAX_EVENTS 2
+
 static int
-eq_read(struct fid_eq *eq, struct fi_eq_cm_entry *entry, uint32_t *event,
-	int timeout)
+event_read(struct rpma_zone *zone, enum rdma_cm_event_type *event, int timeout)
 {
-	ssize_t sret;
-	struct fi_eq_err_entry err;
+	struct epoll_event events[MAX_EVENTS];
+	int ret;
 
-	sret = fi_eq_sread(eq, event, entry, sizeof(*entry), timeout, 0);
-	VALGRIND_DO_MAKE_MEM_DEFINED(&sret, sizeof(sret));
+	/* if epoll indicates an event is ready it has to be ready */
+	int event_is_ready = 0;
 
-	if (sret == -FI_ETIMEDOUT || sret == -FI_EAGAIN)
-		return EQ_TIMEOUT;
+	while (1) {
+		ret = rdma_get_cm_event(zone->ec, &zone->edata);
 
-	if (sret < 0 || (size_t)sret != sizeof(*entry)) {
-		sret = fi_eq_readerr(eq, &err, 0);
-		if (sret < 0) {
-			ERR_FI(sret, "fi_eq_readerr");
-		} else if (sret > 0) {
-			ASSERT(sret == sizeof(err));
-			ERR("fi_eq_sread: %s",
-			    fi_eq_strerror(eq, err.prov_errno, NULL, NULL, 0));
+		/* a valid event obtained */
+		if (ret == 0) {
+			*event = zone->edata->event;
+			break;
 		}
 
-		return EQ_ERR;
+		ASSERTeq(event_is_ready, 0);
+
+		ret = RPMA_E_ERRNO;
+		/* an unexpected error occurred */
+		if (ret != -EAGAIN)
+			return ret;
+
+		/* wait for incoming events */
+		ret = epoll_wait(zone->ec_epoll, events, MAX_EVENTS, timeout);
+		if (ret == 0)
+			return EC_TIMEOUT;
+		else if (ret < 0)
+			return RPMA_E_ERRNO;
+
+		event_is_ready = 1;
 	}
 
+	return 0;
+}
+
+int
+rpma_zone_event_ack(struct rpma_zone *zone)
+{
+	ASSERTne(zone->edata, NULL);
+
+	int ret = rdma_ack_cm_event(zone->edata);
+	if (ret) {
+		ret = RPMA_E_ERRNO;
+		ERR_STR(ret, "rdma_ack_cm_event");
+		return ret;
+	}
+
+	zone->edata = NULL;
 	return 0;
 }
 
@@ -475,21 +443,54 @@ zone_on_timeout(struct rpma_zone *zone, void *uarg)
 	return func(zone, uarg);
 }
 
+static void
+conn_store(struct ravl *store, struct rpma_connection *conn)
+{
+	struct id_conn_pair *pair = Malloc(sizeof(*pair));
+	pair->id = conn->id;
+	pair->conn = conn;
+
+	ravl_insert(store, pair);
+}
+
+static struct rpma_connection *
+conn_restore(struct ravl *store, struct rdma_cm_id *id)
+{
+	struct id_conn_pair to_find;
+	to_find.id = id;
+	to_find.conn = NULL;
+
+	struct ravl_node *node =
+		ravl_find(store, &to_find, RAVL_PREDICATE_EQUAL);
+	if (!node)
+		return NULL;
+
+	struct id_conn_pair *found = ravl_data(node);
+	if (!found)
+		return NULL;
+
+	struct rpma_connection *ret = found->conn;
+	Free(found);
+	ravl_remove(store, node);
+
+	return ret;
+}
+
 int
 rpma_zone_wait_connections(struct rpma_zone *zone, void *uarg)
 {
 	zone->uarg = uarg;
 
-	int ret;
-	struct fi_eq_cm_entry entry;
-	uint32_t event;
 	struct rpma_connection *conn;
+
+	enum rdma_cm_event_type event = RPMA_CM_EVENT_TYPE_INVALID;
+	int ret;
 
 	uint64_t *waiting = &zone->waiting;
 	rpma_utils_wait_start(waiting);
 
 	if (zone->flags & RPMA_CONFIG_IS_SERVER) {
-		if (!zone->pep)
+		if (!zone->listen_id)
 			zone_listen(zone);
 	} else {
 		ret = zone->on_connection_event_func(
@@ -499,30 +500,28 @@ rpma_zone_wait_connections(struct rpma_zone *zone, void *uarg)
 	}
 
 	while (rpma_utils_is_waiting(waiting)) {
-		ret = eq_read(zone->eq, &entry, &event, zone->timeout);
-		if (ret == EQ_TIMEOUT) {
+		ret = event_read(zone, &event, zone->timeout);
+		if (ret == EC_TIMEOUT) {
 			if (zone_on_timeout(zone, uarg))
 				break;
 			continue;
-		} else if (ret == EQ_ERR) {
-			ret = RPMA_E_EQ_READ;
+		} else if (ret == EC_ERR) {
+			ret = RPMA_E_EC_READ;
 			break;
 		}
 
 		switch (event) {
-			case FI_CONNREQ:
-				zone->conn_req_info = entry.info;
+			case RDMA_CM_EVENT_CONNECT_REQUEST:
 				ret = zone->on_connection_event_func(
 					zone, RPMA_CONNECTION_EVENT_INCOMING,
 					NULL, uarg);
-				rpma_utils_freeinfo(&zone->conn_req_info);
 				if (ret)
 					return ret;
 				++zone->active_connections;
 				break;
-			case FI_SHUTDOWN:
+			case RDMA_CM_EVENT_DISCONNECTED:
 				conn = conn_restore(zone->connections,
-						    entry.fid);
+						    zone->edata->id);
 				ret = zone->on_connection_event_func(
 					zone, RPMA_CONNECTION_EVENT_DISCONNECT,
 					conn, uarg);
@@ -532,7 +531,7 @@ rpma_zone_wait_connections(struct rpma_zone *zone, void *uarg)
 				break;
 			default:
 				ERR("unexpected event received (%u)", event);
-				ret = RPMA_E_EQ_EVENT;
+				ret = RPMA_E_EC_EVENT;
 				break;
 		}
 	}
@@ -543,31 +542,32 @@ rpma_zone_wait_connections(struct rpma_zone *zone, void *uarg)
 int
 rpma_zone_wait_connected(struct rpma_zone *zone, struct rpma_connection *conn)
 {
+	enum rdma_cm_event_type event = RPMA_CM_EVENT_TYPE_INVALID;
 	int ret = 0;
-	struct fi_eq_cm_entry entry;
-	uint32_t event;
 
 	while (rpma_utils_is_waiting(&zone->waiting)) {
-		ret = eq_read(zone->eq, &entry, &event, zone->timeout);
-		if (ret == EQ_TIMEOUT) {
+		ret = event_read(zone, &event, zone->timeout);
+		if (ret == EC_TIMEOUT) {
 			if (zone_on_timeout(zone, zone->uarg))
 				break;
 			continue;
-		} else if (ret == EQ_ERR) {
-			ret = RPMA_E_EQ_READ;
+		} else if (ret == EC_ERR) {
+			ret = RPMA_E_EC_READ;
 			break;
 		}
 
-		if (event == FI_CONNECTED) {
-			if (entry.fid != &conn->ep->fid) {
-				ERR("unexpected fid received (%p)", entry.fid);
-				ret = RPMA_E_EQ_EVENT_DATA;
+		if (event == RDMA_CM_EVENT_ESTABLISHED) {
+			if (zone->edata->id != conn->id) {
+				ERR("unexpected id received (%p)",
+				    zone->edata->id);
+				ret = RPMA_E_EC_EVENT_DATA;
 			}
 			conn_store(zone->connections, conn);
+			ret = rpma_zone_event_ack(zone);
 			break;
 		} else {
 			ERR("unexpected event received (%u)", event);
-			ret = RPMA_E_EQ_EVENT;
+			ret = RPMA_E_EC_EVENT;
 			break;
 		}
 	}

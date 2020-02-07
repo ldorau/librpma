@@ -7,9 +7,3 @@ low-level support for remote access to persistent memory. A detailed
 explanation of these examples can be found here: http://pmem.io/pmdk/librpma
 
 manpage_(client|server).c is the example used in the librpma man page.
-
-To build these examples:
-	make
-
-These examples can be built against an installed system using:
-	make LIBDIR=/usr/lib INCDIR=/usr/include

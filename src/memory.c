@@ -1,5 +1,5 @@
 /*
- * Copyright 2019, Intel Corporation
+ * Copyright 2019-2020, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,9 +34,7 @@
  * memory.c -- entry points for librpma memory
  */
 
-#include <endian.h>
-#include <rdma/fabric.h>
-#include <rdma/fi_domain.h>
+#include <infiniband/verbs.h>
 
 #include "alloc.h"
 #include "memory.h"
@@ -44,28 +42,33 @@
 #include "rpma_utils.h"
 #include "zone.h"
 
-static uint64_t
+static int
 usage_to_access(int usage)
 {
-	uint64_t access = 0;
+	int access = 0;
 
 	if (usage & RPMA_MR_READ_SRC) {
-		RPMA_FLAG_ON(access, FI_REMOTE_READ);
+		RPMA_FLAG_ON(access, IBV_ACCESS_REMOTE_READ);
 		RPMA_FLAG_OFF(usage, RPMA_MR_READ_SRC);
 	}
 
 	if (usage & RPMA_MR_READ_DST) {
-		RPMA_FLAG_ON(access, FI_READ);
+		RPMA_FLAG_ON(access, 0); /* XXX */
 		RPMA_FLAG_OFF(usage, RPMA_MR_READ_DST);
 	}
 
 	if (usage & RPMA_MR_WRITE_SRC) {
-		RPMA_FLAG_ON(access, FI_WRITE);
+		RPMA_FLAG_ON(access, IBV_ACCESS_LOCAL_WRITE);
 		RPMA_FLAG_OFF(usage, RPMA_MR_WRITE_SRC);
 	}
 
 	if (usage & RPMA_MR_WRITE_DST) {
-		RPMA_FLAG_ON(access, FI_REMOTE_WRITE);
+		/*
+		 * if IBV_ACCESS_REMOTE_WRITE is set, then
+		 * IBV_ACCESS_LOCAL_WRITE must be set too.
+		 */
+		RPMA_FLAG_ON(access,
+			     IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE);
 		RPMA_FLAG_OFF(usage, RPMA_MR_WRITE_DST);
 	}
 
@@ -76,38 +79,39 @@ usage_to_access(int usage)
 
 int
 rpma_memory_local_new_internal(struct rpma_zone *zone, void *ptr, size_t size,
-			       uint64_t access,
-			       struct rpma_memory_local **mem_ptr)
+			       int access, struct rpma_memory_local **mem_ptr)
 {
-	struct fid_mr *mr;
-	void *context = NULL; /* XXX? */
+	int ret;
 
-	int ret = fi_mr_reg(zone->domain, ptr, size, access, 0, 0, 0, &mr,
-			    context);
-	if (ret) {
-		ERR_FI(ret, "fi_mr_reg");
-		return ret;
+	struct ibv_mr *mr = ibv_reg_mr(zone->pd, ptr, size, access);
+	if (!mr) {
+		return RPMA_E_ERRNO;
 	}
 
 	struct rpma_memory_local *mem = Malloc(sizeof(*mem));
-	if (!mem)
-		return RPMA_E_ERRNO;
+	if (!mem) {
+		ret = RPMA_E_ERRNO;
+		goto err_malloc;
+	}
 
 	mem->ptr = ptr;
 	mem->size = size;
 	mem->mr = mr;
-	mem->desc = fi_mr_desc(mr);
 
 	*mem_ptr = mem;
 
 	return 0;
+
+err_malloc:
+	(void)ibv_dereg_mr(mr);
+	return ret;
 }
 
 int
 rpma_memory_local_new(struct rpma_zone *zone, void *ptr, size_t size, int usage,
 		      struct rpma_memory_local **mem_ptr)
 {
-	uint64_t access = usage_to_access(usage);
+	int access = usage_to_access(usage);
 	return rpma_memory_local_new_internal(zone, ptr, size, access, mem_ptr);
 }
 
@@ -133,7 +137,7 @@ memory_id_internal_hton(rpma_memory_id_internal *id)
 	COMPILE_ERROR_ON(sizeof(id->size) != sizeof(uint64_t));
 
 	id->raddr = htobe64(id->raddr);
-	id->rkey = htobe64(id->rkey);
+	id->rkey = htobe32(id->rkey);
 	id->size = htobe64(id->size);
 }
 
@@ -141,7 +145,7 @@ static void
 memory_id_internal_ntoh(rpma_memory_id_internal *id)
 {
 	id->raddr = be64toh(id->raddr);
-	id->rkey = be64toh(id->rkey);
+	id->rkey = be32toh(id->rkey);
 	id->size = be64toh(id->size);
 }
 
@@ -153,7 +157,7 @@ rpma_memory_local_get_id(struct rpma_memory_local *mem,
 
 	rpma_memory_id_internal id_internal;
 	id_internal.raddr = (uint64_t)mem->ptr;
-	id_internal.rkey = fi_mr_key(mem->mr);
+	id_internal.rkey = mem->mr->rkey;
 	id_internal.size = mem->size;
 	memory_id_internal_hton(&id_internal);
 
@@ -171,7 +175,9 @@ rpma_memory_local_delete(struct rpma_memory_local **mem)
 	if (!ptr)
 		return 0;
 
-	rpma_utils_res_close(&ptr->mr->fid, "fid_mr");
+	int ret = ibv_dereg_mr(ptr->mr);
+	if (!ret)
+		return -ret; /* XXX wrap this into macro? */
 
 	Free(ptr);
 	*mem = NULL;

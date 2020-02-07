@@ -1,5 +1,5 @@
 /*
- * Copyright 2019, Intel Corporation
+ * Copyright 2019-2020, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -42,14 +42,14 @@ struct rpma_memory_local {
 	void *ptr;
 	size_t size;
 
-	struct fid_mr *mr;
+	struct ibv_mr *mr;
 	void *desc; /* local memory descriptor */
 };
 
 struct rpma_memory_remote {
 	/* XXX version required */
 	uint64_t raddr; /* remote memory base address */
-	uint64_t rkey;	/* remote memory protection key */
+	uint32_t rkey;	/* remote memory protection key */
 	size_t size;
 	uint64_t unused[1]; /* XXX */
 };
@@ -57,7 +57,7 @@ struct rpma_memory_remote {
 typedef struct rpma_memory_remote rpma_memory_id_internal;
 
 int rpma_memory_local_new_internal(struct rpma_zone *zone, void *ptr,
-				   size_t size, uint64_t access,
+				   size_t size, int access,
 				   struct rpma_memory_local **mem_ptr);
 
 #endif /* memory.h */

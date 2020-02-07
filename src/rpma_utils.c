@@ -1,5 +1,5 @@
 /*
- * Copyright 2019, Intel Corporation
+ * Copyright 2019-2020, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,24 +34,11 @@
  * rpma_utils.c -- entry points for librpma RPMA utils
  */
 
+#include <fcntl.h>
+
 #include <librpma.h>
 
 #include "rpma_utils.h"
-
-void
-rpma_utils_res_close(struct fid *res, const char *desc)
-{
-	int ret = fi_close(res);
-	if (ret)
-		ERR_FI(ret, "fi_close(%s)", desc);
-}
-
-void
-rpma_utils_freeinfo(struct fi_info **info)
-{
-	fi_freeinfo(*info);
-	*info = NULL;
-}
 
 void
 rpma_utils_wait_start(uint64_t *waiting)
@@ -79,4 +66,21 @@ rpma_utils_is_waiting(uint64_t *waiting)
 	uint64_t is_waiting;
 	util_atomic_load_explicit64(waiting, &is_waiting, memory_order_acquire);
 	return is_waiting;
+}
+
+int
+rpma_utils_fd_set_nonblock(int fd)
+{
+	int ret;
+
+	ret = fcntl(fd, F_GETFL);
+	if (ret < 0)
+		return RPMA_E_ERRNO;
+
+	int flags = ret | O_NONBLOCK;
+	ret = fcntl(fd, F_SETFL, flags);
+	if (ret < 0)
+		return RPMA_E_ERRNO;
+
+	return 0;
 }
