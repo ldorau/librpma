@@ -104,3 +104,5 @@ add_test_generic(NAME template-test CASE 3 TRACERS none)
 add_test_generic(NAME template-test CASE 4 TRACERS none)
 add_test_generic(NAME template-test CASE 5 TRACERS none)
 
+build_test(hello-test hello-test/hello-test.c)
+add_test_generic(NAME hello-test CASE 0 TRACERS none)
