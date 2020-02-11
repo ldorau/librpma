@@ -65,19 +65,3 @@ Valgrind instrumentation must be enabled during compilation by adding flags:
 
 If there are no memcheck / helgrind / drd / pmemcheck headers installed on your
 system, build will fail.
-
-## On Windows ##
-
-#### Install libpmemobj via vcpkg ####
-```sh
-vcpkg install pmdk:x64-windows
-vcpkg integrate install
-```
-
-```sh
-...
-cmake . -Bbuild -G "Visual Studio 14 2015 Win64"
-        -DCMAKE_TOOLCHAIN_FILE=c:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake
-
-msbuild build/ALL_BUILD.vcxproj
-```

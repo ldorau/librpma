@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2019, Intel Corporation
+ * Copyright 2015-2020, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -123,8 +123,6 @@ test_dump_backtrace(void)
 
 #define BSIZE 100
 
-#ifndef _WIN32
-
 #include <execinfo.h>
 
 /*
@@ -150,46 +148,6 @@ test_dump_backtrace(void)
 
 	free(strings);
 }
-
-#else /* _WIN32 */
-
-#include <assert.h>
-#include <tchar.h>
-#include <windows.h>
-
-#include <DbgHelp.h>
-
-/*
- * test_dump_backtrace -- dump stacktrace to error log
- */
-void
-test_dump_backtrace(void)
-{
-	void *buffer[BSIZE];
-	unsigned nptrs;
-	SYMBOL_INFO *symbol;
-
-	HANDLE proc_hndl = GetCurrentProcess();
-	SymInitialize(proc_hndl, NULL, TRUE);
-
-	nptrs = CaptureStackBackTrace(0, BSIZE, buffer, NULL);
-	symbol = calloc(sizeof(SYMBOL_INFO) + MAX_SYM_NAME * sizeof(CHAR), 1);
-	symbol->MaxNameLen = MAX_SYM_NAME - 1;
-	symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
-
-	for (unsigned i = 0; i < nptrs; i++) {
-		if (SymFromAddr(proc_hndl, (DWORD64)buffer[i], 0, symbol)) {
-			printf("%u: %s [%p]\n", nptrs - i - 1, symbol->Name,
-			       buffer[i]);
-		} else {
-			printf("%u: [%p]\n", nptrs - i - 1, buffer[i]);
-		}
-	}
-
-	free(symbol);
-}
-
-#endif /* _WIN32 */
 
 #endif /* USE_LIBUNWIND */
 
@@ -217,9 +175,7 @@ test_register_sighandlers(void)
 	signal(SIGILL, test_sighandler);
 	signal(SIGFPE, test_sighandler);
 	signal(SIGINT, test_sighandler);
-#ifndef _WIN32
 	signal(SIGALRM, test_sighandler);
 	signal(SIGQUIT, test_sighandler);
 	signal(SIGBUS, test_sighandler);
-#endif
 }

@@ -1,6 +1,6 @@
 
 /*
- * Copyright 2019, Intel Corporation
+ * Copyright 2019-2020, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -58,11 +58,7 @@ main(int argc, char *argv[])
 	size_t size;
 	int flags = PMEM_FILE_CREATE;
 
-#ifdef _WIN32
-	void *addr = pmem_map_fileU(path, 4096, flags, 0, &size, &is_pmem);
-#else
 	void *addr = pmem_map_file(path, 4096, flags, 0, &size, &is_pmem);
-#endif
 	if (addr == NULL) {
 		perror("pmem_map_file failed");
 		return 2;
