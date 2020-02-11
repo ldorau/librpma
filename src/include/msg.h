@@ -1,5 +1,5 @@
 /*
- * Copyright 2019, Intel Corporation
+ * Copyright 2019-2020, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,7 +31,7 @@
  */
 
 /*
- * librpma/msg.h -- definitions of librpma msg entry points (EXPERIMENTAL)
+ * msg.h -- definitions of librpma msg entry points (EXPERIMENTAL)
  *
  * This library provides low-level support for remote access to persistent
  * memory utilizing RDMA-capable RNICs.

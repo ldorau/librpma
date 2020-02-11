@@ -31,7 +31,7 @@
  */
 
 /*
- * librpma/base.h -- base definitions of librpma entry points (EXPERIMENTAL)
+ * base.h -- base definitions of librpma entry points (EXPERIMENTAL)
  *
  * This library provides low-level support for remote access to persistent
  * memory utilizing RDMA-capable RNICs.
@@ -206,4 +206,4 @@ const char *rpma_errormsg(void);
 #ifdef __cplusplus
 }
 #endif
-#endif /* librpma/base.h */
+#endif /* base.h */
