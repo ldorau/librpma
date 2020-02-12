@@ -29,67 +29,10 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-project(rpma C)
+include(${SRC_DIR}/../helpers.cmake)
 
-add_cppstyle(src
-	${CMAKE_CURRENT_SOURCE_DIR}/*.[ch]
-	${CMAKE_CURRENT_SOURCE_DIR}/common/*.[ch]
-	${CMAKE_CURRENT_SOURCE_DIR}/include/*.h)
+setup()
 
-add_check_whitespace(src
-	${CMAKE_CURRENT_SOURCE_DIR}/*.[ch]
-	${CMAKE_CURRENT_SOURCE_DIR}/common/*.[ch]
-	${CMAKE_CURRENT_SOURCE_DIR}/include/*.h)
+execute(${TEST_EXECUTABLE})
 
-set(SOURCES
-	common/alloc.c
-	common/os_posix.c
-	common/os_thread_posix.c
-	common/out.c
-	common/ravl.c
-	common/util.c
-	common/util_posix.c
-	config.c
-	connection.c
-	dispatcher.c
-	librpma.c
-	memory.c
-	msg.c
-	rma.c
-	rpma.c
-	rpma_utils.c
-	zone.c)
-
-add_library(rpma SHARED ${SOURCES})
-
-target_include_directories(rpma PRIVATE . include common)
-
-if(TESTS_USE_FAULT_INJECTION)
-	target_compile_definitions(rpma PUBLIC FAULT_INJECTION=1)
-endif()
-
-target_link_libraries(rpma PRIVATE
-	${LIBPMEM_LIBRARIES}
-	${LIBIBVERBS_LIBRARIES}
-	${LIBRDMACM_LIBRARIES}
-	-Wl,--version-script=${CMAKE_SOURCE_DIR}/src/librpma.map)
-
-set_target_properties(rpma PROPERTIES
-	SOVERSION 0
-	PUBLIC_HEADER include/librpma.h
-	PUBLIC_HEADER include/base.h
-	PUBLIC_HEADER include/msg.h
-	PUBLIC_HEADER include/rma.h)
-
-target_compile_definitions(rpma PRIVATE SRCVERSION="${SRCVERSION}")
-
-if(VALGRIND_FOUND)
-	target_include_directories(rpma PRIVATE src/valgrind)
-	# Enable librpma valgrind annotations
-	target_compile_options(rpma PRIVATE -DLIBRPMA_VG_ENABLED=1)
-endif()
-
-install(TARGETS rpma
-	PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-	RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+finish()

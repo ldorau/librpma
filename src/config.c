@@ -74,6 +74,9 @@ rpma_config_new(struct rpma_config **cfg)
 int
 rpma_config_set_addr(struct rpma_config *cfg, const char *addr)
 {
+	if (addr == NULL)
+		return -1;
+
 	cfg->addr = strdup(addr);
 
 	if (!cfg->addr)
@@ -85,6 +88,9 @@ rpma_config_set_addr(struct rpma_config *cfg, const char *addr)
 int
 rpma_config_set_service(struct rpma_config *cfg, const char *service)
 {
+	if (service == NULL)
+		return -1;
+
 	cfg->service = strdup(service);
 
 	if (!cfg->service)
