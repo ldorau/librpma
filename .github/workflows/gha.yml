@@ -7,7 +7,7 @@
 # when we decide to switch from Travis to GitHub Actions. The 'XXX_DISABLE_' suffix should be removed then.
 #
 
-name: librpma
+name: RPMA
 on: [push, pull_request]
 
 env:

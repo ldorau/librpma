@@ -1,8 +1,8 @@
 librpma
 ===============
 
-[![Build Status](https://travis-ci.org/ldorau/librpma.svg?branch=master)](https://travis-ci.org/ldorau/librpma)
-[![Build status](https://github.com/ldorau/librpma/workflows/CPP/badge.svg)](https://github.com/ldorau/librpma/actions)
+[![Travis build status](https://travis-ci.org/ldorau/librpma.svg?branch=master)](https://travis-ci.org/ldorau/librpma)
+[![GHA build status](https://github.com/ldorau/librpma/workflows/RPMA/badge.svg)](https://github.com/ldorau/librpma/actions)
 [![librpma version](https://img.shields.io/github/tag/ldorau/librpma.svg)](https://github.com/ldorau/librpma/releases/latest)
 [![Coverity Scan Build Status](https://scan.coverity.com/projects/15911/badge.svg)](https://scan.coverity.com/projects/pmem-librpma)
 [![Coverage Status](https://codecov.io/github/ldorau/librpma/coverage.svg?branch=master)](https://codecov.io/gh/ldorau/librpma/branch/master)
