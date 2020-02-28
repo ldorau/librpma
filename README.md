@@ -7,14 +7,12 @@ librpma
 [![Coverity Scan Build Status](https://scan.coverity.com/projects/15911/badge.svg)](https://scan.coverity.com/projects/pmem-librpma)
 [![Coverage Status](https://codecov.io/github/ldorau/librpma/coverage.svg?branch=master)](https://codecov.io/gh/ldorau/librpma/branch/master)
 
-... for libpmemobj (https://github.com/pmem/pmdk)
 More information in src/README.md
 
 # How to build #
 
 ## Requirements: ##
 - cmake >= 3.3
-- libpmemobj-dev(el) >= 1.8 (https://pmem.io/pmdk/)
 - compiler with C++11 support:
 	- GCC >= 4.8.1 (C++11 is supported in GCC since version 4.8.1, but it does not support expanding variadic template variables in lambda expressions, which is required to build persistent containers and is possible with GCC >= 4.9.0. If you want to build librpma without testing containers, use flag TEST_XXX=OFF (separate flag for each container))
 	- clang >= 3.3

@@ -5,5 +5,4 @@ Name: librpma
 Description: librpma - template for a new libpmem library
 Version: @VERSION@
 URL: https://github.com/ldorau/librpma
-Requires: libpmemobj >= @LIBPMEMOBJ_REQUIRED_VERSION@
 Cflags: -I${includedir}

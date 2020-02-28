@@ -1,5 +1,5 @@
 #
-# Copyright 2018-2019, Intel Corporation
+# Copyright 2018-2020, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -67,13 +67,11 @@ set(CPACK_RPM_PACKAGE_NAME "librpma-devel")
 set(CPACK_RPM_PACKAGE_GROUP "Development/Libraries")
 set(CPACK_RPM_PACKAGE_LICENSE "BSD")
 set(CPACK_RPM_PACKAGE_ARCHITECTURE x86_64)
-set(CPACK_RPM_PACKAGE_REQUIRES "libpmemobj-devel >= ${LIBPMEMOBJ_REQUIRED_VERSION}")
 #set(CPACK_RPM_CHANGELOG_FILE ${CMAKE_SOURCE_DIR}/ChangeLog)
 
 set(CPACK_DEBIAN_PACKAGE_NAME "librpma-dev")
 set(CPACK_DEBIAN_PACKAGE_VERSION ${CPACK_PACKAGE_VERSION})
 set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE amd64)
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "libpmemobj-dev (>= ${LIBPMEMOBJ_REQUIRED_VERSION})")
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "marcin.slusarz@intel.com")
 
 if("${CPACK_GENERATOR}" STREQUAL "RPM")
